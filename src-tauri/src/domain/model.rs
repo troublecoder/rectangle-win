@@ -210,8 +210,13 @@ impl Default for KeyboardConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModifierMode {
+    /// throw 커서 무브와 같은 modifier 조합 공유
     Shared,
+    /// 별개 modifier 조합 사용
     Separate,
+    /// Windows 기본 Win+방향키 Snap을 가로채서 우리 snap으로 대체.
+    /// Win+방향키만 swallow하고 나머지 Win 조합은 정상 통과.
+    OverrideOs,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
