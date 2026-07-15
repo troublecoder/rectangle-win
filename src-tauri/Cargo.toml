@@ -20,5 +20,14 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # 인프라 - 설정 경로 조회 (OS config 디렉터리)
 dirs = "5"
 
+# Win32 API 바인딩 — Windows 타겟에서만 활성화.
+# WindowMover / MonitorProvider 구현체가 사용한다.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+]}
+
 [dev-dependencies]
 tempfile = "3"
