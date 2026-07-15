@@ -1,41 +1,111 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import type { NavigationMenuItem } from '@nuxt/ui'
+import { en as enLocale, ko as koLocale } from '@nuxt/ui/locale'
 
-const items = computed<NavigationMenuItem[][]>([
+const { t, locale } = useI18n()
+
+function changeLocale(value: string) {
+  locale.value = value
+}
+const route = useRoute()
+
+const navItems = computed<NavigationMenuItem[][]>(() => [
   [
-    { label: 'Settings', type: 'label' },
-    { label: 'General', icon: 'i-lucide-settings', to: '/general' },
-    { label: 'Throw', icon: 'i-lucide-mouse-pointer-click', to: '/throw' },
-    { label: 'Snap Editor', icon: 'i-lucide-layout-grid', to: '/snap-editor' },
-    { label: 'Keyboard', icon: 'i-lucide-keyboard', to: '/keyboard' },
-    { label: 'Display', icon: 'i-lucide-monitor', to: '/display' },
-    { label: 'About', icon: 'i-lucide-info', to: '/about' },
-  ],
-  [
-    { label: 'Pause', icon: 'i-lucide-pause' },
-    { label: 'Quit', icon: 'i-lucide-log-out' },
+    { label: t('nav.general'), icon: 'i-lucide-settings', to: '/general' },
+    { label: t('nav.throw'), icon: 'i-lucide-mouse-pointer-click', to: '/throw' },
+    { label: t('nav.snapEditor'), icon: 'i-lucide-layout-grid', to: '/snap-editor' },
+    { label: t('nav.keyboard'), icon: 'i-lucide-keyboard', to: '/keyboard' },
+    { label: t('nav.display'), icon: 'i-lucide-monitor', to: '/display' },
+    { label: t('nav.about'), icon: 'i-lucide-info', to: '/about' },
   ],
 ])
+
+const locales = [enLocale, koLocale]
+
+const pageTitle = computed(() => {
+  const name = (route.name as string | undefined)?.replace('-', '') ?? ''
+  if (!name) return ''
+  // snap-editor → snapEditor 매핑
+  const keyMap: Record<string, string> = { 'snapeditor': 'snapEditor' }
+  const key = keyMap[name] ?? name
+  return t(`nav.${key}`)
+})
 </script>
 
 <template>
   <div class="flex h-screen w-screen overflow-hidden bg-default text-default">
-    <aside class="w-56 shrink-0 border-r border-default flex flex-col">
-      <div class="p-4 border-b border-default">
-        <h1 class="text-lg font-bold flex items-center gap-2">
-          <span class="inline-block size-5 rounded bg-primary-500"></span>
-          Rectangle Win
-        </h1>
+    <!-- Sidebar -->
+    <aside
+      class="flex w-60 shrink-0 flex-col border-r border-default bg-elevated/40"
+    >
+      <!-- Header: app name + color mode -->
+      <div class="flex items-center justify-between gap-2 px-4 py-4">
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-square" class="size-5 text-primary" />
+          <span class="text-sm font-semibold">{{ t('app.name') }}</span>
+        </div>
+        <UColorModeButton />
       </div>
-      <UNavigationMenu
-        orientation="vertical"
-        :items="items"
-        highlight
-        class="flex-1 data-[orientation=vertical]:w-full border-0"
-      />
+
+      <USeparator />
+
+      <!-- Navigation -->
+      <nav class="flex-1 overflow-y-auto p-3">
+        <UNavigationMenu
+          :items="navItems"
+          orientation="vertical"
+          class="w-full"
+        />
+      </nav>
+
+      <USeparator />
+
+      <!-- Footer: locale select + pause/quit -->
+      <div class="space-y-3 p-3">
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-languages" class="size-4 text-muted" />
+          <ULocaleSelect
+            :model-value="locale"
+            :locales="locales"
+            size="sm"
+            class="flex-1"
+            @update:model-value="changeLocale($event as string)"
+          />
+        </div>
+        <div class="flex gap-2">
+          <UButton
+            :label="t('nav.pause')"
+            icon="i-lucide-pause"
+            color="neutral"
+            variant="soft"
+            size="sm"
+            block
+          />
+          <UButton
+            :label="t('nav.quit')"
+            icon="i-lucide-power"
+            color="error"
+            variant="ghost"
+            size="sm"
+            block
+          />
+        </div>
+      </div>
     </aside>
-    <main class="flex-1 overflow-auto p-6">
-      <RouterView />
+
+    <!-- Content -->
+    <main class="flex flex-1 flex-col overflow-hidden">
+      <header
+        class="flex items-center gap-3 border-b border-default px-6 py-4"
+      >
+        <h1 class="text-lg font-semibold">{{ pageTitle }}</h1>
+      </header>
+      <div class="flex-1 overflow-y-auto p-6">
+        <RouterView />
+      </div>
     </main>
   </div>
 </template>

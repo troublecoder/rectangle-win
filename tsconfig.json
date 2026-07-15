@@ -13,17 +13,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"],
-      "#build/ui": ["./node_modules/.nuxt-ui/ui"],
-      "#build/ui/*": ["./node_modules/.nuxt-ui/ui/*"]
-    }
+    "paths": { "@/*": ["./src/*"] }
   },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.vue",
-    "src/**/*.d.ts",
-    "auto-imports.d.ts",
-    "components.d.ts"
-  ]
+  "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts"]
 }
