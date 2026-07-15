@@ -8,6 +8,9 @@ edition = { workspace = true }
 statig = { version = "0.4" }
 euclid = "0.22"
 
+# 동기화
+parking_lot = "0.12"
+
 # 직렬화 & 에러
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
