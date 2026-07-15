@@ -108,12 +108,13 @@ src/
 │       ├── ReticleOverlay.vue  #   파이 차트 + 커서 포인터 원
 │       └── PieSector.vue
 │
-├── pages/                      # 라우트 페이지 (thin)
-│   ├── general.vue
-│   ├── cursor.vue              #   throw + long throw 설정
-│   ├── snap-editor.vue         #   snap 영역 + 매핑 + 체인 통합 에디터
+├── pages/                      # 라우트 페이지 = 사이드바 카테고리 (1:1 매칭)
+│   ├── general.vue             #   시작옵션, 트레이, 언어
+│   ├── throw.vue               #   Window Throw + Long Throw 설정
+│   ├── snap-editor.vue         #   snap 영역 + 섹터 매핑 + 체인 (통합)
+│   ├── keyboard.vue            #   키보드 스냅 + modifier 모드 + 체인
 │   ├── display.vue             #   reticle/오버레이 색상·크기
-│   ├── update.vue
+│   ├── update.vue              #   자동 업데이트
 │   └── about.vue
 │
 └── shared/
@@ -355,10 +356,49 @@ check_on_startup = true
 
 ## 6. Snap Editor UI
 
-### 6.1 3패널 레이아웃 (양방향 동기화)
+### 6.1 전체 앱 레이아웃 — 사이드바 내비게이션
+
+앱은 설정 기능만 제공하므로, **모든 설정 카테고리를 좌측 사이드바에 배치**하고 클릭시 우측 콘텐츠 영역이 전환됩니다. Nuxt UI의 `UDashboardLayout` + `UVerticalNavigation` 또는 `UNavigationMenu` 기반.
 
 ```
-┌────────────┬──────────────────────────────────────┬──────────┐
+┌──────────────────────────────────────────────────────────────┐
+│  ● Rectangle Win                                    _ □ ×     │
+├────────────┬─────────────────────────────────────────────────┤
+│            │                                                 │
+│  GENERAL   │   ◄── 선택된 카테고리의 콘텐츠                   │
+│  THROW     │       (General / Throw / Snap Editor /          │
+│ ▸SNAP EDIT │        Keyboard / Display / Update / About)     │
+│  KEYBOARD  │                                                 │
+│  DISPLAY   │                                                 │
+│  UPDATE    │                                                 │
+│  ABOUT     │                                                 │
+│            │                                                 │
+│            │                                                 │
+│ ─────────  │                                                 │
+│ ⏸ Pause    │                                                 │
+│ Quit       │                                                 │
+└────────────┴─────────────────────────────────────────────────┘
+```
+
+사이드바 항목:
+- **General** — 시작 옵션(로그인 시 시작, 최소화 시작), 트레이, 언어
+- **Throw** — Window Throw 활성화, trigger modifier, Long Throw 거리/매핑
+- **Snap Editor** — snap 영역/액션 관리 + 섹터 매핑 + 체인 편집 (통합 페이지)
+- **Keyboard** — 키보드 스냅 활성화, trigger modifier, modifier 모드(shared/separate), 체인
+- **Display** — reticle 스타일, 커서 포인터 색상/크기, 섹터 수, 미리보기
+- **Update** — 자동 업데이트 활성화, 채널(stable/beta), 수동 확인
+- **About** — 버전, GitHub 링크
+
+하단: 앱 일시정지(Pause) / 종료(Quit) 버튼.
+
+### 6.2 Snap Editor 페이지 — 3패널 (양방향 동기화)
+
+Snap Editor 카테고리 선택시 우측에 표시되는 통합 에디터. 영역 관리 + 섹터 매핑 + 체인 편집이 하단 탭으로 전환.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Snap Editor               Preset: [Standard ▼]  [Import][Export]
+├────────────┬──────────────────────────────────────┬──────────┤
 │  영역 목록  │      모니터 도화감 (vue-konva)        │  속성 패널│
 │            │                                      │          │
 │ ┌────────┐ │   ┌──────────────────────────────┐  │ Type:    │
@@ -375,24 +415,48 @@ check_on_startup = true
 │            │                                      │ Action:  │
 │            │                                      │ [Maximize▼│
 ├────────────┴──────────────────────────────────────┴──────────┤
-│ Preset: [Standard ▼]   [ Sector Mapping ] [ Chain Editor ]   │
+│  [ Snap Areas ]  [ Sector Mapping ]  [ Keyboard Chains ]    │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+하단 탭 전환:
+- **Snap Areas**: 3패널 영역 에디터 (좌측 목록 / 중앙 캔버스 / 우측 속성)
+- **Sector Mapping**: 8 파이 섹터 시각화 + 각 섹터별 SnapTarget 선택기
+- **Keyboard Chains**: horizontal/vertical 체인 드래그 순서 편집
 
 **양방향 동기화 원칙** (단일 진실 소스):
 - 폼 입력 → store 갱신 → 캔버스 자동 리렌더
 - 캔버스 드래그/resize → 비율 변환 → store 갱신 → 폼 자동 갱신
 - store 변경시 debounce(300ms) → Tauri command → TOML write
 
-### 6.2 Chain Editor
+### 6.3 Sector Mapper (Sector Mapping 탭)
 
-- horizontal 체인: 드래그로 순서 편집, snap pool에서 항목 추가/제거
-- vertical 체인: 동일
-- 각 체인은 snap pool의 id를 참조하는 단순 배열
+8개 파이 섹터를 원형으로 시각적으로 표시. 각 섹터 클릭 → SnapTarget 선택기 (영역/액션 콤보박스 모두 선택 가능).
 
-### 6.3 Sector Mapper
+```
+         ┌───────────┐
+         │ ▲ Maximize │  (섹터 6 = 위)
+         └──┬─────┬──┘
+  ┌────────┐ │     │ ┌────────┐
+  │◤ TL Qt │ │  •  │ │TR Qt ◥ │  (섹터 5/7 = 대각선)
+  └────────┘ │     │ └────────┘
+  ┌────────┐ │     │ ┌────────┐
+  │◀ L Half│ │     │ │R Half ▶│  (섹터 4/0 = 좌우)
+  └────────┘ │     │ └────────┘
+  ┌────────┐ │     │ ┌────────┐
+  │◣ BL Qt │ │     │ │BR Qt ◢ │  (섹터 3/1 = 대각선)
+  └────────┘ │     │ └────────┘
+         ┌──┴─────┴──┐
+         │▼ Minimize  │  (섹터 2 = 아래)
+         └───────────┘
+```
 
-8개 파이 섹터를 시각적으로 표시. 각 섹터 클릭 → SnapTarget 선택기 (영역/액션 콤보박스 모두 선택 가능).
+### 6.4 Chain Editor (Keyboard Chains 탭)
+
+- **horizontal 체인**: 드래그로 순서 편집 (좌=역방향, 우=정방향 순회용)
+- **vertical 체인**: 드래그로 순서 편집 (위=역방향, 아래=정방향 순회용)
+- 각 체인은 snap pool의 id를 참조하는 단순 배열. 항목 추가/제거 버튼.
+- snap pool의 영역/액션이 드롭다운으로 표시되어 체인에 추가 가능.
 
 ---
 
