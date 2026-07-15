@@ -1,0 +1,15 @@
+[package]
+name = "rectangle-win"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+# 도메인 코어
+statig = { version = "0.4" }
+euclid = "0.22"
+
+# 직렬화 & 에러
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
