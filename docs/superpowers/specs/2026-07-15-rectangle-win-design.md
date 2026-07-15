@@ -383,7 +383,39 @@ check_on_startup = true
 - **General** — 시작 옵션(로그인 시 시작, 최소화 시작), 트레이, 언어
 - **Throw** — Window Throw 활성화, trigger modifier, Long Throw 거리/매핑
 - **Snap Editor** — snap 영역/액션 관리 + 섹터 매핑 + 체인 편집 (통합 페이지)
-- **Keyboard** — 키보드 스냅 활성화, trigger modifier, modifier 모드(shared/separate), 체인
+- **Keyboard** — 키보드 스냅 활성화, modifier 모드 선택 (3가지 라디오 버튼), 체인 편집
+
+Keyboard 페이지 상세 구성:
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Keyboard Snap                                                │
+│                                                               │
+│  [x] Enable keyboard snap                                    │
+│                                                               │
+│  Modifier Mode:                                              │
+│  ( ) Separate — 별개 modifier 사용 (기본: Ctrl+Alt)          │
+│  ( ) Shared   — Throw와 같은 modifier 공유 (Win+Alt)         │
+│  (•) Override Windows Snap — Win+방향키를 우리 snap으로 대체  │
+│      ⚠ Windows 기본 Snap(Aero Snap)이 작동하지 않게 됩니다.   │
+│      Win+방향키만 가로채고, 나머지 Win 조합은 정상 작동합니다.│
+│                                                               │
+│  ── Separate / Shared 모드일 때 ──                            │
+│  Trigger Modifiers: [Ctrl] [Alt] [✏ 변경]                    │
+│                                                               │
+│  ── Override 모드일 때 ──                                     │
+│  (이 영역은 숨김 — Win 고정)                                  │
+│                                                               │
+│  Cycle Timeout: [1500] ms                                    │
+│                                                               │
+│  Horizontal Chain (← / →):  [Chain Editor ▼]                 │
+│  Vertical Chain (↑ / ↓):    [Chain Editor ▼]                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+`override_os` 모드 선택시:
+- modifier 입력 필드 숨김 (Win 고정)
+- 경고 메시지 표시 (UAlert / UCallout)
+- 나머지 Win 조합은 정상 작동한다는 안내 포함
 - **Display** — reticle 스타일, 커서 포인터 색상/크기, 섹터 수, 미리보기
 - **About** — 버전, GitHub 링크, **자동 업데이트**(활성화, 채널 stable/beta, 수동 확인) 통합
 
