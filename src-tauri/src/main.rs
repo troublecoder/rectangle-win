@@ -1,7 +1,5 @@
-#![allow(unused_imports)]
-
-use rectangle_win::domain;
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    println!("Rectangle Win — domain core loaded");
+    rectangle_win::run();
 }

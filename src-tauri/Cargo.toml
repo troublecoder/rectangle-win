@@ -3,6 +3,9 @@ name = "rectangle-win"
 version = { workspace = true }
 edition = { workspace = true }
 
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
 # 도메인 코어
 statig = { version = "0.4" }
@@ -20,6 +23,18 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # 인프라 - 설정 경로 조회 (OS config 디렉터리)
 dirs = "5"
 
+# Tauri v2 데스크톱 프레임워크 + 공식 플러그인
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
+
+# 로깅 / 비동기 런타임
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1", features = ["full"] }
+
 # Win32 API 바인딩 — Windows 타겟에서만 활성화.
 # WindowMover / MonitorProvider 구현체가 사용한다.
 [target.'cfg(windows)'.dependencies]
@@ -31,3 +46,8 @@ windows = { version = "0.58", features = [
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# 이 기능은 `tauri dev`/`tauri build` 사용 시 자동으로 활성화되어
+# generate_context! 매크로가 tauri.conf.json 을 읽게 한다.
+custom-protocol = ["tauri/custom-protocol"]
