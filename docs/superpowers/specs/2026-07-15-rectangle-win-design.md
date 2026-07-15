@@ -25,7 +25,9 @@
 | 백엔드 | Rust + Tauri v2 |
 | Win32 바인딩 | [windows-rs](https://github.com/microsoft/windows-rs) (Microsoft 공식) |
 | FSM | [statig](https://github.com/mdeloof/statig) (hierarchical state machine) |
-| 프론트엔드 | Vue 3 + [Nuxt UI](https://ui.nuxt.com) |
+| 프론트엔드 | Vue 3 + [Nuxt UI v4](https://ui.nuxt.com) (Vue SPA 모드) |
+| 상태 관리 | [Pinia](https://pinia.vuejs.org/) (전역 config store) |
+| 검증 | [Zod](https://zod.dev) (Tauri IPC 응답 런타임 검증) |
 | 캔버스 | [vue-konva](https://konvajs.org/docs/vue/index.html) (에디터 + 오버레이) |
 | 설정 | TOML (`%APPDATA%\rectangle-win\config.toml`) |
 | 업데이트 | Tauri Updater + GitHub Releases |
