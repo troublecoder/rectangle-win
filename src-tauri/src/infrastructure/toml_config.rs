@@ -65,15 +65,20 @@ impl TomlConfigStore {
         Ok(config)
     }
 
-    /// 기본 Config 에 standard 프리셋 + 8섹터 throw 매핑을 적용해 반환.
+    /// 기본 Config 에 extended 프리셋 + 8섹터 throw 매핑을 적용해 반환.
+    ///
+    /// extended 프리셋을 사용하는 이유: ChainConfig 기본 vertical chain 이
+    /// almost-maximize / center(action) / maximize-height 을 참조하는데,
+    /// 이들은 extended 프리셋에만 존재한다. standard 프리셋으로는 chain 이
+    /// snap target 을 찾지 못해 "target not found" 에러가 발생한다.
     fn config_with_defaults() -> Config {
         use crate::domain::model::SectorMap;
         use crate::domain::presets::SnapPreset;
 
         let mut config = Config::default();
-        let preset = SnapPreset::from_str(&config.snap.active_preset)
-            .unwrap_or(SnapPreset::Standard);
-        config.snap.areas = preset.targets();
+        // extended 프리셋 사용 — chain 기본값이 참조하는 모든 target 포함.
+        config.snap.active_preset = "extended".to_string();
+        config.snap.areas = SnapPreset::Extended.targets();
 
         // 8섹터 throw 매핑 — 시계방향, 0번=오른쪽(E).
         // 섹터 번호는 domain::model::Sector 주석 기준:

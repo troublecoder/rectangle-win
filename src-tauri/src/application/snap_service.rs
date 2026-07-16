@@ -134,25 +134,24 @@ impl SnapService {
         };
 
         let mut inner = self.inner.lock();
+        let distance = geometry::throw_distance(euclid::Vector2D::new(delta_x, delta_y));
         match inner.state {
             SnapState::Idle => {
                 // Idle에서는 이벤트 무시 (FSM과 동일)
             }
             SnapState::Armed => {
-                // Armed -> Tracking 전이. 첫 이동 이벤트에서 즉시 섹터/거리 계산.
-                inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
-                inner.fsm.throw_distance = geometry::throw_distance(euclid::Vector2D::new(
-                    delta_x,
-                    delta_y,
-                ));
-                inner.state = SnapState::Tracking;
+                // Armed → Tracking 전이는 임계값 이상 이동 시에만.
+                // delta가 거의 0이면 Armed 유지 — modifier만 누르고 마우스 안 움직인 상태.
+                if distance >= MIN_THROW_DISTANCE {
+                    inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
+                    inner.fsm.throw_distance = distance;
+                    inner.state = SnapState::Tracking;
+                }
+                // 임계값 미만: Armed 유지, sector/distance 갱신 안 함.
             }
             SnapState::Tracking => {
                 inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
-                inner.fsm.throw_distance = geometry::throw_distance(euclid::Vector2D::new(
-                    delta_x,
-                    delta_y,
-                ));
+                inner.fsm.throw_distance = distance;
             }
         }
 
@@ -272,15 +271,42 @@ impl SnapService {
             Some(t) => t,
             None => return Ok(None),
         };
-        // Area 타입만 좌표 계산 가능.
-        if let crate::domain::model::SnapTarget::Area { x_ratio, y_ratio, w_ratio, h_ratio, .. } =
-            target
-        {
-            let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
-            let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, &monitor);
-            Ok(Some((rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)))
-        } else {
-            Ok(None)
+        // Area 타입: 비율 → 픽셀 변환.
+        // Action 타입: 액션별 대략적 영역 반환 (미리보기용).
+        let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
+        match target {
+            crate::domain::model::SnapTarget::Area { x_ratio, y_ratio, w_ratio, h_ratio, .. } => {
+                let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, &monitor);
+                Ok(Some((rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)))
+            }
+            crate::domain::model::SnapTarget::Action { action, .. } => {
+                use crate::domain::model::WindowAction;
+                // 액션별 미리보기 영역 — 대략적인 픽셀 영역.
+                let (x, y, w, h) = match action {
+                    WindowAction::Maximize | WindowAction::Restore => {
+                        (monitor.origin.x, monitor.origin.y, monitor.width(), monitor.height())
+                    }
+                    WindowAction::Minimize => {
+                        // 최소화 — 미리보기 의미 없음, 작은 영역.
+                        (monitor.origin.x, monitor.origin.y, monitor.width(), 40)
+                    }
+                    WindowAction::Center => {
+                        let mw = monitor.width();
+                        let mh = monitor.height();
+                        (monitor.origin.x + mw / 4, monitor.origin.y + mh / 4, mw / 2, mh / 2)
+                    }
+                    WindowAction::AlmostMaximize => {
+                        let mw = monitor.width();
+                        let mh = monitor.height();
+                        (monitor.origin.x + mw / 20, monitor.origin.y + mh / 20, mw * 9 / 10, mh * 9 / 10)
+                    }
+                    WindowAction::MaximizeHeight => {
+                        (monitor.origin.x, monitor.origin.y, monitor.width() / 2, monitor.height())
+                    }
+                    _ => return Ok(None),
+                };
+                Ok(Some((x, y, w, h)))
+            }
         }
     }
 

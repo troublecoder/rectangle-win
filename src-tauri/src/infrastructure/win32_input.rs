@@ -327,15 +327,20 @@ fn register_hotkeys(hwnd: &HWND, config_store: &Arc<dyn ConfigStore>) {
         (HOTKEY_DOWN, VK_DOWN.0 as u32, "Down"),
     ];
 
+    eprintln!("핫키 등록: modifiers=0x{:X}", modifiers.0);
+    let mut registered = 0;
     for (id, vk, name) in keys {
         // SAFETY: hwnd 는 방금 생성한 유효 창. modifiers/vk 는 상수.
         match unsafe { RegisterHotKey(*hwnd, id, modifiers, vk) } {
-            Ok(()) => {}
+            Ok(()) => {
+                registered += 1;
+            }
             Err(e) => {
                 eprintln!("핫키 등록 실패 ({name}, id={id}): {e} — 스킵");
             }
         }
     }
+    eprintln!("핫키 등록 완료: {registered}/4 성공");
 }
 
 /// 등록한 핫키 4종 모두 해제. 종료 시 호출.

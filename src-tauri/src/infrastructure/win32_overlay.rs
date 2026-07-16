@@ -342,32 +342,24 @@ impl Win32LayeredOverlay {
         Ok(hwnd)
     }
 
-    /// 현재 상태로 전체 재그리기 + 창 위치/크기/표시 제어.
+    /// 현재 상태로 전체 재그리기 + 창 표시 제어.
     ///
-    /// 창은 항상 "현재 snap preview 사각형" 영역만 덮도록 위치/크기를 갱신한다.
-    /// preview 가 없으면(초기 lock-on 등) 1x1 로 축소하여 시스템 UI를 가리지 않는다.
+    /// 창은 항상 전체 가상 데스크톱 크기로 고정되어 있고(초기 생성 시 설정),
+    /// WS_EX_TRANSPARENT + WS_EX_LAYERED 로 클릭스루가 보장된다.
+    /// visible 플래그로 show/hide만 제어하고, 창 위치/크기는 바꾸지 않는다.
+    /// 깜빡임/위치 어긋남 문제를 근본적으로 해결.
     fn redraw(&self) {
-        let mut res_guard = self.resources.lock().unwrap();
-        let Some(res) = res_guard.as_mut() else {
+        let res_guard = self.resources.lock().unwrap();
+        let Some(res) = res_guard.as_ref() else {
             return; // 초기화 실패 — no-op
         };
         let state = self.state.lock().unwrap();
         if !state.visible {
-            // 숨김 — 창 자체를 hide 하고 1x1 로 축소.
+            // 숨김 — 창을 hide. 전체 화면이지만 WS_EX_TRANSPARENT로 클릭 통과.
             let _ = unsafe { ShowWindow(res.hwnd, SW_HIDE) };
-            let _ = Self::position_overlay(res, 0, 0, 1, 1);
             return;
         }
-        // 표시 — 창을 snap preview rect (또는 축소 fallback) 에 맞춰 위치/크기.
-        let (x, y, w, h) = match state.snap_preview {
-            Some((sx, sy, sw, sh)) if sw > 0 && sh > 0 => (sx, sy, sw, sh),
-            // snap preview 가 없으면(초기 lock-on) 시스템 UI 가림 방지를 위해 1x1.
-            _ => (0, 0, 1, 1),
-        };
-        if let Err(e) = Self::position_overlay(res, x, y, w, h) {
-            eprintln!("[OVERLAY] position_overlay 실패: {e}");
-        }
-        // 창을 보이게 하고(포커스 없이) 그리기.
+        // 표시 — 창을 보이게 하고(포커스 없이) 절대 좌표로 그리기.
         let _ = unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
         // OverlayConfig 로드 실패 시 기본값으로 폴백 (오버레이는 계속 동작).
         let overlay_cfg = self
@@ -473,15 +465,16 @@ impl Win32LayeredOverlay {
             // snap 미리보기 — 점선 사각형 외곽 + 반투명 채우기.
             // config.snap_preview 가 true 일 때만 그린다.
             // 색상 전환: active_sector 유무로 lock-on(RED) vs throw-target(BLUE) 구분.
+            // 창은 전체 가상 데스크톱이므로 절대 좌표(가상 화면 좌표)로 그린다.
             if cfg.snap_preview {
-                if let Some((_sx, _sy, sw, sh)) = state.snap_preview {
+                if let Some((sx, sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
-                        // 창-로컬 좌표: 창이 preview rect 와 동일 크기이므로 (0,0)~(sw,sh).
+                        // 절대 좌표 — 창이 전체 가상 데스크톱이므로 그대로 사용.
                         let rect = D2D_RECT_F {
-                            left: 0.0,
-                            top: 0.0,
-                            right: sw as f32,
-                            bottom: sh as f32,
+                            left: sx as f32,
+                            top: sy as f32,
+                            right: (sx + sw) as f32,
+                            bottom: (sy + sh) as f32,
                         };
                         // active_sector == None → lock-on (cursor_color, RED)
                         // active_sector == Some → throw target (sector_highlight_color, BLUE)

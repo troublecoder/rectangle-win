@@ -39,6 +39,8 @@ pub struct KeyboardService {
     sector_index: Mutex<usize>,
     /// ↑/↓ 액션 체인 인덱스.
     vindex: Mutex<usize>,
+    /// 마지막으로 snap 한 창 핸들 — minimize 후 foreground 가 없을 때 사용.
+    last_window: Mutex<Option<u64>>,
 }
 
 impl KeyboardService {
@@ -53,6 +55,7 @@ impl KeyboardService {
             config_store,
             sector_index: Mutex::new(0),
             vindex: Mutex::new(0),
+            last_window: Mutex::new(None),
         }
     }
 
@@ -70,10 +73,17 @@ impl KeyboardService {
             return Ok(None);
         }
 
-        let window = self
-            .window_mover
-            .get_foreground_window()
-            .ok_or(ApplicationError::NoForegroundWindow)?;
+        // foreground 창 획득 — minimize 후 등 foreground 가 없으면 last_window 사용.
+        let window = match self.window_mover.get_foreground_window() {
+            Some(w) => {
+                *self.last_window.lock() = Some(w);
+                w
+            }
+            None => {
+                // 최소화된 창 등 — 마지막 snap 창으로 복원 시도.
+                self.last_window.lock().ok_or(ApplicationError::NoForegroundWindow)?
+            }
+        };
 
         // 방향에 따라 순회 대상 결정.
         //
