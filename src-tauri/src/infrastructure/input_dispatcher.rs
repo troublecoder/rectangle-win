@@ -1,13 +1,12 @@
 //! 입력 이벤트 분류/라우팅 순수 로직.
 //!
 //! OS 후크 계층(Task 2+3)에서 수집한 raw 입력 이벤트를 [`InputEvent`] 로
-//! 정규화한 뒤 [`classify`] 에게 전달하면, 현재 활성 설정(modifier 조합,
-//! [`ModifierMode`])을 기준으로 어느 서비스로 라우팅할지 [`RouteTarget`] 을
-//! 돌려준다.
+//! 정규화한 뒤 [`classify`] 에게 전달하면, 현재 활성 modifier 조합을 기준으로
+//! 어느 서비스로 라우팅할지 [`RouteTarget`] 을 돌려준다.
 //!
 //! 이 모듈에는 부수 효과가 전혀 없으며, Tauri/Win32 의존 없이 단위 테스트 가능하다.
 
-use crate::domain::model::{Direction, ModifierMode};
+use crate::domain::model::Direction;
 
 /// 정규화된 입력 이벤트. OS 후크 계층이 이벤트를 이 형태로 변환한다.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,8 +37,6 @@ pub enum RouteTarget {
     KeyboardService(Direction),
     /// 무시 (다른 핫키 / 일반 입력).
     Ignore,
-    /// Win+방향키 OS snap 을 삼키고 우리 snap 으로 대체 (OverrideOs 모드).
-    SwallowOsSnap(Direction),
 }
 
 /// 두 modifier 리스트가 (순서 무관하게) 동일한 원소 집합인지 검사.
@@ -57,15 +54,10 @@ fn modifiers_match(pressed: &[String], expected: &[String]) -> bool {
 /// 정규화된 [`InputEvent`] 를 어디로 라우팅할지 결정한다.
 ///
 /// 인자:
-/// - `throw_modifiers`: throw(커서) snap 트리거 modifier 조합
-/// - `kb_modifiers`: 키보드 snap (Separate 모드) 트리거 modifier 조합
-/// - `kb_mode`: 현재 키보드 snap 동작 모드
-pub fn classify(
-    event: &InputEvent,
-    throw_modifiers: &[String],
-    kb_modifiers: &[String],
-    kb_mode: ModifierMode,
-) -> RouteTarget {
+/// - `throw_modifiers`: throw(커서) 및 키보드 snap 이 공유하는 트리거 modifier 조합
+///
+/// 키보드 snap 은 항상 throw 와 동일한 modifier 조합을 사용한다 (Shared 고정).
+pub fn classify(event: &InputEvent, throw_modifiers: &[String]) -> RouteTarget {
     match event {
         InputEvent::ModifierPressed { modifiers } => {
             if modifiers_match(modifiers, throw_modifiers) {
@@ -82,29 +74,13 @@ pub fn classify(
                 RouteTarget::Ignore
             }
         }
-        InputEvent::ArrowKey { direction, modifiers } => match kb_mode {
-            ModifierMode::OverrideOs => {
-                if modifiers.iter().any(|m| m == "Win") {
-                    RouteTarget::SwallowOsSnap(*direction)
-                } else {
-                    RouteTarget::Ignore
-                }
+        InputEvent::ArrowKey { direction, modifiers } => {
+            if modifiers_match(modifiers, throw_modifiers) {
+                RouteTarget::KeyboardService(*direction)
+            } else {
+                RouteTarget::Ignore
             }
-            ModifierMode::Shared => {
-                if modifiers_match(modifiers, throw_modifiers) {
-                    RouteTarget::KeyboardService(*direction)
-                } else {
-                    RouteTarget::Ignore
-                }
-            }
-            ModifierMode::Separate => {
-                if modifiers_match(modifiers, kb_modifiers) {
-                    RouteTarget::KeyboardService(*direction)
-                } else {
-                    RouteTarget::Ignore
-                }
-            }
-        },
+        }
     }
 }
 
@@ -115,9 +91,6 @@ mod tests {
     fn throw_mods() -> Vec<String> {
         vec!["Win".into(), "Alt".into()]
     }
-    fn kb_mods() -> Vec<String> {
-        vec!["Ctrl".into(), "Alt".into()]
-    }
 
     #[test]
     fn throw_modifier_routes_to_snap() {
@@ -125,48 +98,32 @@ mod tests {
             modifiers: throw_mods(),
         };
         assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
+            classify(&event, &throw_mods()),
             RouteTarget::SnapService
         );
     }
 
     #[test]
-    fn arrow_separate_mode() {
+    fn arrow_with_throw_mods_routes_to_keyboard() {
+        // 키보드 snap 은 throw modifier 조합을 공유 (Win+Alt+방향키).
         let event = InputEvent::ArrowKey {
             direction: Direction::Right,
-            modifiers: kb_mods(),
+            modifiers: throw_mods(),
         };
         assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
+            classify(&event, &throw_mods()),
             RouteTarget::KeyboardService(Direction::Right)
         );
     }
 
     #[test]
-    fn arrow_override_os_mode() {
-        let event = InputEvent::ArrowKey {
-            direction: Direction::Down,
-            modifiers: vec!["Win".into()],
-        };
-        assert_eq!(
-            classify(
-                &event,
-                &throw_mods(),
-                &kb_mods(),
-                ModifierMode::OverrideOs
-            ),
-            RouteTarget::SwallowOsSnap(Direction::Down)
-        );
-    }
-
-    #[test]
-    fn arrow_shared_mode() {
+    fn arrow_left_with_throw_mods_routes_to_keyboard() {
         let event = InputEvent::ArrowKey {
             direction: Direction::Left,
             modifiers: throw_mods(),
         };
         assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Shared),
+            classify(&event, &throw_mods()),
             RouteTarget::KeyboardService(Direction::Left)
         );
     }
@@ -176,27 +133,16 @@ mod tests {
         let event = InputEvent::ModifierPressed {
             modifiers: vec!["Shift".into()],
         };
-        assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
-            RouteTarget::Ignore
-        );
+        assert_eq!(classify(&event, &throw_mods()), RouteTarget::Ignore);
     }
 
     #[test]
-    fn override_os_ignores_non_win_arrows() {
+    fn arrow_with_non_throw_mods_ignored() {
         let event = InputEvent::ArrowKey {
             direction: Direction::Right,
             modifiers: vec!["Ctrl".into()],
         };
-        assert_eq!(
-            classify(
-                &event,
-                &throw_mods(),
-                &kb_mods(),
-                ModifierMode::OverrideOs
-            ),
-            RouteTarget::Ignore
-        );
+        assert_eq!(classify(&event, &throw_mods()), RouteTarget::Ignore);
     }
 
     #[test]
@@ -205,10 +151,7 @@ mod tests {
             delta_x: 12.0,
             delta_y: -3.5,
         };
-        assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
-            RouteTarget::SnapService
-        );
+        assert_eq!(classify(&event, &throw_mods()), RouteTarget::SnapService);
     }
 
     #[test]
@@ -219,7 +162,7 @@ mod tests {
             cancel: false,
         };
         assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
+            classify(&event, &throw_mods()),
             RouteTarget::SnapService
         );
     }
@@ -230,10 +173,7 @@ mod tests {
             modifiers: vec!["Shift".into()],
             cancel: true,
         };
-        assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
-            RouteTarget::Ignore
-        );
+        assert_eq!(classify(&event, &throw_mods()), RouteTarget::Ignore);
     }
 
     #[test]
@@ -250,15 +190,12 @@ mod tests {
     }
 
     #[test]
-    fn arrow_separate_mode_wrong_mods_ignored() {
-        // Separate 모드에서 throw_modifiers 만 눌린 방향키는 무시
+    fn arrow_partial_mods_ignored() {
+        // modifier 중 일부만 눌린 방향키는 무시
         let event = InputEvent::ArrowKey {
             direction: Direction::Up,
-            modifiers: throw_mods(),
+            modifiers: vec!["Win".into()],
         };
-        assert_eq!(
-            classify(&event, &throw_mods(), &kb_mods(), ModifierMode::Separate),
-            RouteTarget::Ignore
-        );
+        assert_eq!(classify(&event, &throw_mods()), RouteTarget::Ignore);
     }
 }

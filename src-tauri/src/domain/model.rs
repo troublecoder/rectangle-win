@@ -135,6 +135,8 @@ pub struct GeneralConfig {
     pub start_minimized: bool,
     pub show_in_tray: bool,
     pub language: String,
+    /// Windows 기본 Win+방향키 Snap 동작을 우리 snap으로 오버라이드할지 여부.
+    pub override_win_snap: bool,
 }
 
 impl Default for GeneralConfig {
@@ -144,6 +146,7 @@ impl Default for GeneralConfig {
             start_minimized: true,
             show_in_tray: true,
             language: "ko".to_string(),
+            override_win_snap: false,
         }
     }
 }
@@ -240,57 +243,14 @@ impl<'de> Deserialize<'de> for SectorMap {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardConfig {
     pub enabled: bool,
-    pub trigger_modifiers: Vec<String>,
-    pub modifier_mode: ModifierMode,
     pub cycle_timeout_ms: u64,
-    pub chains: ChainConfig,
 }
 
 impl Default for KeyboardConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            trigger_modifiers: vec!["Ctrl".to_string(), "Alt".to_string()],
-            modifier_mode: ModifierMode::Separate,
             cycle_timeout_ms: 1500,
-            chains: ChainConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ModifierMode {
-    /// throw 커서 무브와 같은 modifier 조합 공유
-    Shared,
-    /// 별개 modifier 조합 사용
-    Separate,
-    /// Windows 기본 Win+방향키 Snap을 가로채서 우리 snap으로 대체.
-    /// Win+방향키만 swallow하고 나머지 Win 조합은 정상 통과.
-    OverrideOs,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChainConfig {
-    pub horizontal: Vec<String>,
-    pub vertical: Vec<String>,
-}
-
-impl Default for ChainConfig {
-    fn default() -> Self {
-        Self {
-            horizontal: vec![
-                "left-half".to_string(),
-                "third-left".to_string(),
-                "center".to_string(),
-                "third-right".to_string(),
-                "right-half".to_string(),
-            ],
-            vertical: vec![
-                "maximize".to_string(),
-                "almost-maximize".to_string(),
-                "center".to_string(),
-                "maximize-height".to_string(),
-            ],
         }
     }
 }
@@ -397,13 +357,5 @@ mod tests {
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(config, parsed);
-    }
-
-    #[test]
-    fn chain_config_default_vertical() {
-        let chains = ChainConfig::default();
-        assert_eq!(chains.vertical, vec![
-            "maximize", "almost-maximize", "center", "maximize-height"
-        ]);
     }
 }

@@ -2,5 +2,4 @@ pub mod errors;
 pub mod model;
 pub mod presets;
 pub mod geometry;
-pub mod keyboard_chain;
 pub mod cursor_fsm;

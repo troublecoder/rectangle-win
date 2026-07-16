@@ -67,10 +67,10 @@ impl TomlConfigStore {
 
     /// 기본 Config 에 extended 프리셋 + 8섹터 throw 매핑을 적용해 반환.
     ///
-    /// extended 프리셋을 사용하는 이유: ChainConfig 기본 vertical chain 이
-    /// almost-maximize / center(action) / maximize-height 을 참조하는데,
-    /// 이들은 extended 프리셋에만 존재한다. standard 프리셋으로는 chain 이
-    /// snap target 을 찾지 못해 "target not found" 에러가 발생한다.
+    /// extended 프리셋을 사용하는 이유: 키보드 ↑/↓ 액션 순환 체인이
+    /// almost-maximize / center(action) / maximize-height 등을 참조하며,
+    /// 이들은 extended 프리셋에만 존재한다. standard 프리셋으로는 snap target 을
+    /// 찾지 못해 "target not found" 에러가 발생한다.
     fn config_with_defaults() -> Config {
         use crate::domain::model::SectorMap;
         use crate::domain::presets::SnapPreset;

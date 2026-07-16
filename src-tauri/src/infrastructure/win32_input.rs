@@ -42,7 +42,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::application::keyboard_service::KeyboardService;
 use crate::application::ports::ConfigStore;
 use crate::application::snap_service::SnapService;
-use crate::domain::model::{Direction, ModifierMode};
+use crate::domain::model::Direction;
 use crate::infrastructure::win32_monitor::Win32MonitorProvider;
 
 /// 핫키 ID — 방향키 매핑. RegisterHotKey 의 id 파라미터로 사용.
@@ -290,30 +290,14 @@ fn modifiers_to_flags(mods: &[String]) -> HOT_KEY_MODIFIERS {
 
 /// 방향키 4종 핫키 등록.
 ///
-/// 사용할 modifier 조합은 `config.keyboard.modifier_mode` 에 따라 결정된다:
-/// - **Shared**: throw(커서) snap 과 동일 modifier 를 공유 → `throw.trigger_modifiers`
-///   사용 (기본 Win+Alt). Separate 모드와 달리 keyboard.trigger_modifiers 를
-///   쓰면 Win+Alt+방향키가 OS 로 가버려 우리 snap 이 발동하지 않는다.
-/// - **Separate**: 별개 modifier → `keyboard.trigger_modifiers` 사용 (기본 Ctrl+Alt).
-/// - **OverrideOs**: Win+방향키 OS snap 을 가로채는 모드. RegisterHotKey 로는
-///   Win+방향키를 잡을 수 없으므로(LL hook 필요) 여기서는 Separate 와 동일하게
-///   keyboard.trigger_modifiers 로 등록한다. 실제 OS snap 가로채기는 별도 경로.
+/// 키보드 snap 은 항상 throw(커서) snap 과 동일한 modifier 조합을 공유한다
+/// (Shared 고정). 따라서 `throw.trigger_modifiers` (기본 Win+Alt) 를 사용한다.
 ///
 /// config 로드 실패 시 Ctrl+Alt 폴백. 실패(이미 점유된 조합) 시 eprintln 로깅 +
 /// 해당 핫키만 스킵.
 fn register_hotkeys(hwnd: &HWND, config_store: &Arc<dyn ConfigStore>) {
     let modifiers = match config_store.load() {
-        Ok(cfg) => {
-            let mods = match cfg.keyboard.modifier_mode {
-                // Shared: throw 와 modifier 공유. throw.trigger_modifiers 사용.
-                ModifierMode::Shared => &cfg.throw.trigger_modifiers,
-                // Separate / OverrideOs: keyboard 전용 modifier 사용.
-                ModifierMode::Separate | ModifierMode::OverrideOs => {
-                    &cfg.keyboard.trigger_modifiers
-                }
-            };
-            modifiers_to_flags(mods)
-        }
+        Ok(cfg) => modifiers_to_flags(&cfg.throw.trigger_modifiers),
         Err(e) => {
             eprintln!("핫키 등록: config 로드 실패 ({e}) — Ctrl+Alt 폴백 사용");
             modifiers_to_flags(&["Ctrl".to_string(), "Alt".to_string()])

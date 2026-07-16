@@ -8,7 +8,6 @@ import SaveBar from '@/components/SaveBar.vue'
 import SnapCanvas from '@/components/SnapCanvas.vue'
 import SnapProperties from '@/components/SnapProperties.vue'
 import SectorMapping from '@/components/SectorMapping.vue'
-import ChainEditor from '@/components/ChainEditor.vue'
 import type { SnapTarget, SnapPresetName } from '@/entities/config'
 
 const { t } = useI18n()
@@ -30,7 +29,6 @@ const presetItems = computed(() => [
 const tabItems = computed(() => [
   { label: t('snapEditor.tabs.areas'), slot: 'areas', icon: 'i-lucide-layout-grid' },
   { label: t('snapEditor.tabs.sectorMapping'), slot: 'mapping', icon: 'i-lucide-pie-chart' },
-  { label: t('snapEditor.tabs.chains'), slot: 'chains', icon: 'i-lucide-link' },
 ])
 
 const areas = computed(() =>
@@ -178,17 +176,6 @@ async function applyPreset(presetName: string) {
               :long-throw-mapping="store.draft.throw.long_throw_mapping"
               @update:mapping="store.draft!.throw.mapping = $event"
               @update:long-throw-mapping="store.draft!.throw.long_throw_mapping = $event"
-            />
-          </div>
-        </template>
-
-        <!-- Tab 3: Keyboard Chains -->
-        <template #chains>
-          <div class="py-4">
-            <ChainEditor
-              :chains="store.draft.keyboard.chains"
-              :targets="store.draft.snap.areas"
-              @update:chains="store.draft!.keyboard.chains = $event"
             />
           </div>
         </template>

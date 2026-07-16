@@ -11,9 +11,6 @@ pub enum DomainError {
     #[error("invalid ratio {value}: must be between 0.0 and 1.0")]
     InvalidRatio { value: f64 },
 
-    #[error("chain is empty, cannot cycle")]
-    EmptyChain,
-
     #[error("preset not recognized: {0}")]
     UnknownPreset(String),
 }

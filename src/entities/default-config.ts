@@ -10,6 +10,7 @@ export const defaultConfig: Config = {
     start_minimized: true,
     show_in_tray: true,
     language: 'ko',
+    override_win_snap: false,
   },
   snap: {
     active_preset: 'standard',
@@ -36,13 +37,7 @@ export const defaultConfig: Config = {
   },
   keyboard: {
     enabled: true,
-    trigger_modifiers: ['Ctrl', 'Alt'],
-    modifier_mode: 'Separate',
     cycle_timeout_ms: 1500,
-    chains: {
-      horizontal: ['left-half', 'third-left', 'center', 'third-right', 'right-half'],
-      vertical: ['maximize', 'almost-maximize', 'center', 'maximize-height'],
-    },
   },
   overlay: {
     reticle_style: 'pie',
