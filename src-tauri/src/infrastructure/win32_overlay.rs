@@ -1,21 +1,33 @@
 #![cfg(windows)]
 
-//! DirectComposition + Direct2D 기반 오버레이 창.
+//! WS_EX_LAYERED + UpdateLayeredWindow 기반 오버레이 창.
 //!
-//! `WS_EX_NOREDIRECTIONBITMAP | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE`
-//! 창을 만들고, D3D11/DXGI/Direct2D/DirectComposition 파이프라인으로 GPU 직접 합성.
-//! [`OverlayController`] trait 구현 — Rectangle Pro 스타일의 커서 점 마커와
-//! snap 미리보기 사각형을 그린다. 색상/반경/투명도는 `OverlayConfig` 에서 읽어 반영.
+//! 이전에는 `WS_EX_NOREDIRECTIONBITMAP` + DirectComposition + DXGI swap chain 을
+//! 사용했으나, 해당 환경에서는 click-through(`WS_EX_TRANSPARENT` + `HTTRANSPARENT`)
+//! 가 신뢰성 있게 동작하지 않아 작업표시줄 팝업/컨텍스트 메뉴/창 닫기 버튼을
+//! 가로막는 문제가 있었다. 게임 오버레이에서 검증된 고전적 방식인
+//! `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE` +
+//! `UpdateLayeredWindow(ULW_ALPHA | AC_SRC_ALPHA)` 조합으로 전환한다.
+//!
+//! 렌더링 파이프라인:
+//! 1. 32bpp DIB section (`CreateDIBSection`, `BI_RGB`) 을 메모리 DC 에 선택.
+//! 2. `ID2D1DCRenderTarget` 를 생성하고 `BindDC` 로 해당 DC 에 바인딩.
+//! 3. Direct2D 로 장면을 그린다 (BeginDraw/EndDraw). DC render target 은 GDI 와
+//!    호환되므로 픽셀이 DIB 버퍼에 곧바로 기록된다.
+//! 4. `UpdateLayeredWindow` 로 DIB 의 ARGB 픽셀을 layered window 에 합성.
+//!
+//! [`OverlayController`] trait 구현 — Rectangle Pro 스타일 snap 미리보기 사각형.
+//! 색상/반경/투명도는 `OverlayConfig` 에서 읽어 반영.
 //!
 //! 설계 요점:
 //! - 창은 항상 "현재 snap preview 사각형"만큼의 크기로 위치한다.
 //!   preview 가 없으면(초기 lock-on/숨김) 1x1 로 축소한다.
 //!   이렇게 하면 항상-전체화면-최상위 창이 작업표시줄 팝업/컨텍스트 메뉴/
 //!   타이틀바 버튼을 가리는 문제를 막는다.
-//! - `visible` 플래그로만 내용 노출을 제어 (창 자체를 show/hide 반복하지 않음 →
-//!   깜빡임 없음). 단 창 크기/위치는 snap_preview rect 에 맞춰 매번 갱신한다.
+//! - show/hide: `visible=false` 시 `SW_HIDE`, `visible=true` 시 `SW_SHOWNOACTIVATE`.
+//!   창이 숨겨진 동안에는 시스템 UI 를 가리지 않는다.
 //! - 모든 상태 변경마다 전체 재그리기 (D2D 는 충분히 빠름).
-//! - D3D11/DComp 초기화 실패 시 `resources` 가 None 이며 redraw() 는 no-op.
+//! - 초기화 실패 시 `resources` 가 None 이며 redraw() 는 no-op.
 //!   snap 자체는 오버레이 없이도 동작 (graceful degradation).
 //! - D2D 팩토리는 single-threaded 이며, 모든 호출은 입력 스레드에서 직렬로 들어온다.
 //!   `Mutex<OverlayResources>` 가 접근을 직렬화한다.
@@ -28,91 +40,83 @@
 use std::sync::{Arc, Mutex};
 
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-    D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH, D2D1_DEBUG_LEVEL_NONE,
-    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_OPTIONS,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_STROKE_STYLE_PROPERTIES1, D2D1CreateFactory,
-    ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1, ID2D1SolidColorBrush,
-    ID2D1StrokeStyle,
+    D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH, D2D1_DEBUG_LEVEL_NONE, D2D1_FACTORY_OPTIONS,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_STROKE_STYLE_PROPERTIES1,
+    D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory1, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+use windows::Win32::Graphics::Gdi::{
+    AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, DIB_RGB_COLORS, HBITMAP, HDC,
+    HGDIOBJ, SelectObject,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, SetWindowPos, ShowWindow,
+    UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW, HTTRANSPARENT, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOZORDER, UPDATE_LAYERED_WINDOW_FLAGS, ULW_ALPHA, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::application::errors::AppResult;
 use crate::application::ports::{ConfigStore, OverlayController};
 use crate::domain::model::OverlayConfig;
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
-use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, ID3D11Device,
-};
-use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
-};
-use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
-};
-use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC1,
-    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2,
-    IDXGISurface, IDXGISwapChain1,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, SetWindowPos, ShowWindow,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, CS_HREDRAW,
-    CS_VREDRAW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP, HTTRANSPARENT, WM_NCHITTEST,
-};
 
 /// 오버레이 렌더링 상태 — 그릴 내용을 보관.
 #[derive(Default)]
 struct OverlayDrawState {
     visible: bool,
+    #[allow(dead_code)]
     center: Option<(i32, i32)>,
+    #[allow(dead_code)]
     sector_count: u8,
     active_sector: Option<u8>,
     snap_preview: Option<(i32, i32, i32, i32)>,
+    #[allow(dead_code)]
     cursor: Option<(i32, i32)>,
 }
 
-/// DirectComposition/Direct2D 기반 오버레이.
+/// WS_EX_LAYERED + UpdateLayeredWindow 기반 오버레이.
 ///
 /// 앱 시작 시 창을 한 번 생성하고, [`OverlayController`] 메서드 호출 시마다
-/// 상태를 갱신하고 D2D 로 다시 그린다. show/hide는 `visible` 플래그로만 제어
-/// (창 자체를 show/hide 반복하지 않음 → 깜빡임 없음).
+/// 상태를 갱신하고 D2D 로 다시 그린 뒤 `UpdateLayeredWindow` 로 합성한다.
 pub struct Win32LayeredOverlay {
     state: Mutex<OverlayDrawState>,
-    // D3D11/DXGI/D2D/DComp 리소스 — 초기화 후 불변.
+    // GDI/D2D 리소스 — 초기화 후 크기 변경 시 DIB/HDC 만 재생성.
     // 초기화 실패 시 None (graceful degradation: snap만 작동, 오버레이 없음).
     resources: Mutex<Option<OverlayResources>>,
     // 설정 저장소 — redraw 시 OverlayConfig 색상/반경/투명도를 로드.
     config_store: Arc<dyn ConfigStore>,
 }
 
-/// GPU 렌더링 리소스 묶음.
+/// 렌더링 리소스 묶음.
+///
+/// - `hwnd`: layered 오버레이 창.
+/// - `hdc_mem`: DIB 를 선택한 메모리 DC. UpdateLayeredWindow 의 소스 DC.
+/// - `hbitmap`: 32bpp DIB section (ARGB). Direct2D 가 여기에 픽셀을 기록.
+/// - `dc_render_target`: DIB DC 에 바인딩된 Direct2D render target.
+/// - `brush` / `dash_style`: 매 재사용.
 ///
 /// 모든 Win32 COM 핸들(HWND)과 windows-rs 인터페이스 포인터는 기본적으로
 /// `!Send`/`!Sync` 이지만, 본 오버레이는 단일 입력 스레드에서만 접근되며
 /// `Mutex` 가 직렬화를 보장하므로 `Send + Sync` 를 수동으로 선언한다.
-///
-/// 일부 핸들(hwnd/factory 등)은 향후 태스크(리사이즈, 모니터 변경 대응)에서
-/// 사용될 수 있어 보관용으로 유지한다.
-#[allow(dead_code)]
 struct OverlayResources {
     hwnd: HWND,
-    _d3d_device: ID3D11Device,
-    _dxgi_device: IDXGIDevice,
-    dxgi_factory: IDXGIFactory2,
-    swap_chain: IDXGISwapChain1,
+    hdc_mem: HDC,
+    hbitmap: HBITMAP,
+    /// 이전 비트맵(기본 1x1 모노). DeleteObject 로 정리용 보관.
+    _previous_bmp: HGDIOBJ,
+    dc_render_target: ID2D1DCRenderTarget,
+    #[allow(dead_code)]
     d2d_factory: ID2D1Factory1,
-    _d2d_device: ID2D1Device,
-    d2d_context: ID2D1DeviceContext,
-    _dcomp_device: IDCompositionDevice,
-    _dcomp_target: IDCompositionTarget,
-    _dcomp_visual: IDCompositionVisual,
+    brush: ID2D1SolidColorBrush,
     /// 점선(대시) 사각형용 stroke style (snap preview).
     dash_style: ID2D1StrokeStyle,
     width: i32,
@@ -129,7 +133,7 @@ impl Win32LayeredOverlay {
     pub fn new(config_store: Arc<dyn ConfigStore>) -> Self {
         let resources = match Self::init_resources() {
             Ok(r) => {
-                eprintln!("[OVERLAY] init_resources 성공 (창+DComp 준비됨)");
+                eprintln!("[OVERLAY] init_resources 성공 (layered 창 + D2D 준비됨)");
                 Some(r)
             }
             Err(e) => {
@@ -145,100 +149,21 @@ impl Win32LayeredOverlay {
     }
 
     fn init_resources() -> windows::core::Result<OverlayResources> {
-        // 1. 가상 데스크톱 전체 크기.
+        // 1. 가상 데스크톱 전체 크기 (초기값 — 실제 크기는 snap preview rect 로 갱신).
         let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
         let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
         let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
         let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
-        if width <= 0 || height <= 0 {
-            return Err(windows::core::Error::from_hresult(
-                windows::Win32::Foundation::E_FAIL,
-            ));
-        }
-
-        // 2. D3D11 device 생성 — 명시적 feature level 배열 (11_1 → 10_1).
-        // 빈 배열(Some(&[]))은 일부 환경에서 DXGI_ERROR_UNSUPPORTED(0x887A0004)로 실패.
-        let feature_levels = [
-            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_1,
-            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0,
-            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_10_1,
-            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_10_0,
-        ];
-        let mut d3d_device: Option<ID3D11Device> = None;
-        let d3d_result = unsafe {
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                windows::Win32::Foundation::HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                Some(&feature_levels),
-                D3D11_SDK_VERSION,
-                Some(&mut d3d_device),
-                None,
-                None,
-            )
-        };
-        let d3d_device = match d3d_result {
-            Ok(()) => d3d_device.ok_or_else(|| {
-                windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
-            })?,
-            Err(hardware_err) => {
-                // 하드웨어 device 실패 시 WARP(소프트웨어 래스터라이저)로 폴백.
-                eprintln!("[OVERLAY] D3D11 하드웨어 실패({hardware_err}), WARP 폴백 시도");
-                let mut warp_device: Option<ID3D11Device> = None;
-                unsafe {
-                    D3D11CreateDevice(
-                        None,
-                        windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_WARP,
-                        windows::Win32::Foundation::HMODULE::default(),
-                        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                        Some(&feature_levels),
-                        D3D11_SDK_VERSION,
-                        Some(&mut warp_device),
-                        None,
-                        None,
-                    )?;
-                }
-                warp_device.ok_or_else(|| {
-                    windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
-                })?
-            }
+        let (init_w, init_h) = if width > 0 && height > 0 {
+            (width, height)
+        } else {
+            (1, 1)
         };
 
-        // 3. DXGI factory + swap chain (composition용, premultiplied alpha).
-        // IDXGIDevice.GetParent::<IDXGIFactory2> 는 직접 부모(IDXGIAdapter)만
-        // 반환하므로 실패한다. 대신 CreateDXGIFactory2 로 factory 를 직접 생성.
-        let dxgi_device: IDXGIDevice = d3d_device.cast().map_err(|e| {
-            eprintln!("[OVERLAY] d3d_device.cast::<IDXGIDevice> 실패: {e}");
-            e
-        })?;
-        let dxgi_factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }
-            .map_err(|e| {
-                eprintln!("[OVERLAY] CreateDXGIFactory2 실패: {e}");
-                e
-            })?;
+        // 2. 오버레이 창 생성 (layered-transparent-topmost-noactivate).
+        let hwnd = Self::create_overlay_window(x, y, init_w, init_h)?;
 
-        let swap_desc = DXGI_SWAP_CHAIN_DESC1 {
-            Width: width as u32,
-            Height: height as u32,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            BufferCount: 2,
-            SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-            AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
-            ..Default::default()
-        };
-        let swap_chain = unsafe { dxgi_factory.CreateSwapChainForComposition(&dxgi_device, &swap_desc, None) }
-            .map_err(|e| {
-                eprintln!("[OVERLAY] CreateSwapChainForComposition 실패: {e}");
-                e
-            })?;
-
-        // 4. 오버레이 창 생성 (layered-transparent-topmost-noactivate).
-        let hwnd = Self::create_overlay_window(x, y, width, height)?;
-
-        // 5. Direct2D factory + device (D3D11에서).
+        // 3. Direct2D factory.
         let d2d_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(
                 D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -247,24 +172,48 @@ impl Win32LayeredOverlay {
                 }),
             )?
         };
-        let d2d_device = unsafe { d2d_factory.CreateDevice(&dxgi_device)? };
-        let d2d_context =
-            unsafe { d2d_device.CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)? };
 
-        // 6. DirectComposition device + target + visual.
-        let dcomp_device: IDCompositionDevice =
-            unsafe { DCompositionCreateDevice(&dxgi_device)? };
-        let dcomp_target = unsafe { dcomp_device.CreateTargetForHwnd(hwnd, true)? };
-        let dcomp_visual = unsafe { dcomp_device.CreateVisual()? };
-        unsafe {
-            dcomp_visual.SetContent(&swap_chain)?;
-            dcomp_target.SetRoot(&dcomp_visual)?;
-            dcomp_device.Commit()?;
+        // 4. DC render target — GDI 호환(DIB)용. 픽셀 포맷은 B8G8R8A8 premultiplied.
+        let rt_props = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            usage: D2D1_RENDER_TARGET_USAGE_NONE,
+            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+        };
+        let dc_render_target: ID2D1DCRenderTarget =
+            unsafe { d2d_factory.CreateDCRenderTarget(&rt_props)? };
+
+        // 5. 32bpp DIB section + 메모리 DC 생성 후 DC render target 에 바인딩.
+        let (hdc_mem, hbitmap, previous_bmp) = Self::create_dib(init_w, init_h)?;
+        let bind_rect = RECT {
+            left: 0,
+            top: 0,
+            right: init_w,
+            bottom: init_h,
+        };
+        if let Err(e) = unsafe { dc_render_target.BindDC(hdc_mem, &bind_rect) } {
+            let _ = unsafe { DeleteObject(hbitmap) };
+            let _ = unsafe { DeleteDC(hdc_mem) };
+            return Err(e);
         }
 
-        // 7. snap preview 용 대시 stroke style.
-        //    ID2D1Factory1::CreateStrokeStyle 는 _PROPERTIES1 + ID2D1StrokeStyle1 을
-        //    반환하므로, base ID2D1StrokeStyle 로 캐스트하여 보관/사용한다.
+        // 6. 범용 브러시 + 점선 stroke style.
+        let brush: ID2D1SolidColorBrush = unsafe {
+            dc_render_target.CreateSolidColorBrush(
+                &D2D1_COLOR_F {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+                None,
+            )?
+        };
         let dash_style: ID2D1StrokeStyle = unsafe {
             d2d_factory
                 .CreateStrokeStyle(
@@ -285,34 +234,69 @@ impl Win32LayeredOverlay {
 
         Ok(OverlayResources {
             hwnd,
-            _d3d_device: d3d_device,
-            _dxgi_device: dxgi_device,
-            dxgi_factory,
-            swap_chain,
+            hdc_mem,
+            hbitmap,
+            _previous_bmp: previous_bmp,
+            dc_render_target,
             d2d_factory,
-            _d2d_device: d2d_device,
-            d2d_context,
-            _dcomp_device: dcomp_device,
-            _dcomp_target: dcomp_target,
-            _dcomp_visual: dcomp_visual,
+            brush,
             dash_style,
-            width,
-            height,
+            width: init_w,
+            height: init_h,
         })
+    }
+
+    /// 32bpp DIB section + 메모리 DC 생성.
+    /// 반환: (메모리 DC, DIB HBITMAP, SelectObject 로 얻은 이전 객체).
+    /// 호출자는 크기 변경 시 이전 DIB 를 DeleteObject 해야 한다.
+    fn create_dib(
+        w: i32,
+        h: i32,
+    ) -> windows::core::Result<(HDC, HBITMAP, HGDIOBJ)> {
+        let w = w.max(1);
+        let h = h.max(1);
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                // 음수 height → top-down DIB (Direct2D 픽셀 방향과 일치).
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [Default::default(); 1],
+        };
+        let hdc_mem: HDC = unsafe { CreateCompatibleDC(None) };
+        if hdc_mem.is_invalid() {
+            return Err(windows::core::Error::from_hresult(
+                windows::Win32::Foundation::E_FAIL,
+            ));
+        }
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hbitmap: HBITMAP = unsafe {
+            CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?
+        };
+        // DIB 를 메모리 DC 에 선택. 이전 객체는 복구/정리용으로 보관.
+        let previous_bmp = unsafe { SelectObject(hdc_mem, hbitmap) };
+        Ok((hdc_mem, hbitmap, previous_bmp))
     }
 
     /// 오버레이 창 생성.
     ///
-    /// `WS_EX_NOREDIRECTIONBITMAP | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE`
-    /// + `WS_POPUP`. 가상 데스크톱 전체 위치/크기. 생성 후 `SW_SHOWNOACTIVATE` 로
-    /// 한 번만 표시 (이후 계속 떠 있음 — visible 플래그로만 내용 노출 제어).
+    /// `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE`
+    /// + `WS_POPUP`. 초기 위치/크기는 가상 데스크톱 전체. 생성 후 숨김 상태.
     fn create_overlay_window(
         x: i32,
         y: i32,
         width: i32,
         height: i32,
     ) -> windows::core::Result<HWND> {
-        // SAFETY: HSTRING → PCWSTR 변환은 NUL 종료를 보장. 클래스 이름은 앱 고유.
         let class_name = windows::core::w!("RectangleWinOverlay");
 
         let wc = WNDCLASSEXW {
@@ -324,18 +308,15 @@ impl Win32LayeredOverlay {
             ..Default::default()
         };
         let _atom = unsafe { RegisterClassExW(&wc) };
-        // 0 이면 이미 등록되었거나 실패 — CreateWindowExW 가 클래스를 찾지 못하면
-        // 에러를 반환하므로 여기서는 별도 처리하지 않는다.
 
         let ex_style = WINDOW_EX_STYLE(
-            (WS_EX_NOREDIRECTIONBITMAP.0
+            (WS_EX_LAYERED.0
                 | WS_EX_TRANSPARENT.0
                 | WS_EX_TOPMOST.0
                 | WS_EX_NOACTIVATE.0) as u32,
         );
         let style = WINDOW_STYLE(WS_POPUP.0);
 
-        // SAFETY: 클래스는 위에서 등록했음. HWND/HMENU 는 0(없음), HINSTANCE 도 0.
         let hwnd = unsafe {
             CreateWindowExW(
                 ex_style,
@@ -353,11 +334,10 @@ impl Win32LayeredOverlay {
             )?
         };
 
-        // 창은 생성 후 숨김 상태로 시작. throw 활성(visible=true) 시에만 표시.
-        // 항상 떠 있는 전체화면 투명 창은 WS_EX_TRANSPARENT/HTTRANSPARENT 와 무관하게
-        // 일부 환경에서 입력을 삼키는 문제가 있으므로, 숨김/표시로 제어한다.
-        // (DirectComposition + NOREDIRECTIONBITMAP 은 창을 숨겼다 보여도 리소스 유지)
-        // ShowWindow 호출하지 않음 — 숨김 상태로 둠.
+        // 숨김 상태로 시작. throw 활성(visible=true) 시에만 SW_SHOWNOACTIVATE.
+        // 항상 떠 있는 전체화면 투명 창은 입력 이벤트 타이밍에 따라 시스템 UI 를
+        // 가릴 수 있으므로, 명시적으로 show/hide 로 제어한다.
+        let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
 
         Ok(hwnd)
     }
@@ -373,10 +353,9 @@ impl Win32LayeredOverlay {
         };
         let state = self.state.lock().unwrap();
         if !state.visible {
-            // 숨김 — 창 자체를 hide. 투명 클리어 불필요 (창이 안 보임).
-            // 숨김 시에는 창을 1x1 로 축소하여 재표시 시 시스템 UI를 가리지 않게 한다.
+            // 숨김 — 창 자체를 hide 하고 1x1 로 축소.
+            let _ = unsafe { ShowWindow(res.hwnd, SW_HIDE) };
             let _ = Self::position_overlay(res, 0, 0, 1, 1);
-            unsafe { ShowWindow(res.hwnd, SW_HIDE) };
             return;
         }
         // 표시 — 창을 snap preview rect (또는 축소 fallback) 에 맞춰 위치/크기.
@@ -389,23 +368,22 @@ impl Win32LayeredOverlay {
             eprintln!("[OVERLAY] position_overlay 실패: {e}");
         }
         // 창을 보이게 하고(포커스 없이) 그리기.
-        unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
+        let _ = unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
         // OverlayConfig 로드 실패 시 기본값으로 폴백 (오버레이는 계속 동작).
         let overlay_cfg = self
             .config_store
             .load()
             .map(|c| c.overlay)
             .unwrap_or_default();
-        let _ = Self::draw_scene(res, &state, &overlay_cfg);
+        if let Err(e) = Self::draw_scene(res, &state, &overlay_cfg) {
+            eprintln!("[OVERLAY] draw_scene 실패: {e}");
+        }
     }
 
     /// 오버레이 창을 지정한 사각형(x, y, w, h — 가상 화면 좌표)으로 이동/크기 변경.
     ///
-    /// `SetWindowPos` 로 창 위치/크기를 갱신하고, 크기가 바뀌면 DXGI swap chain 의
-    /// 백버퍼를 `ResizeBuffers` 로 재할당한다. D2D 렌더타겟 bitmap 은 다음
-    /// `draw_scene` 호출 시 `bind_back_buffer` 에서 새 백버퍼로부터 재생성된다.
-    ///
-    /// 크기가 동일하면 swap chain resize 를 건너뛴다(불필요한 재할당 방지).
+    /// `SetWindowPos` 로 창 위치/크기를 갱신하고, 크기가 바뀌면 DIB section 을
+    /// 재할당하고 DC render target 을 다시 바인딩한다.
     fn position_overlay(
         res: &mut OverlayResources,
         x: i32,
@@ -413,11 +391,8 @@ impl Win32LayeredOverlay {
         w: i32,
         h: i32,
     ) -> windows::core::Result<()> {
-        // 음수/0 방지 — 최소 1x1.
         let w = w.max(1);
         let h = h.max(1);
-        // SAFETY: hwnd 는 유효한 오버레이 창. SWP_NOACTIVATE|SWP_NOZORDER 로
-        // 포커스/Z순서 변경 없이 위치/크기만 갱신.
         unsafe {
             SetWindowPos(
                 res.hwnd,
@@ -429,68 +404,35 @@ impl Win32LayeredOverlay {
                 SWP_NOACTIVATE | SWP_NOZORDER,
             )?;
         }
-        // swap chain 크기가 바뀐 경우 백버퍼 재할당.
         if res.width != w || res.height != h {
-            // D2D 타겟을 먼저 해제하지 않으면 ResizeBuffers 가 백버퍼 참조로 실패한다.
-            unsafe {
-                res.d2d_context.SetTarget(None);
-            }
-            // SAFETY: swap_chain 은 유효. buffer_count=2(생성 시와 동일),
-            // format 은 생성 시 사용한 B8G8R8A8_UNORM 유지, flags=0.
-            let r = unsafe {
-                res.swap_chain.ResizeBuffers(
-                    2,
-                    w as u32,
-                    h as u32,
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    windows::Win32::Graphics::Dxgi::DXGI_SWAP_CHAIN_FLAG(0),
-                )
-            };
-            if let Err(e) = r {
-                eprintln!("[OVERLAY] ResizeBuffers 실패({w}x{h}): {e}");
-                return Err(e);
-            }
+            Self::resize_dib(res, w, h)?;
             res.width = w;
             res.height = h;
         }
         Ok(())
     }
 
-    /// 백버퍼를 투명하게 클리어하고 Present.
-    fn clear_buffer(res: &OverlayResources) -> windows::core::Result<()> {
-        let bitmap = Self::bind_back_buffer(res)?;
-        unsafe {
-            res.d2d_context.SetTarget(&bitmap);
-            res.d2d_context.BeginDraw();
-            res.d2d_context.Clear(Some(&D2D1_COLOR_F {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            }));
-            res.d2d_context.EndDraw(None, None)?;
-            let _ = res.swap_chain.Present(1, DXGI_PRESENT(0));
-        }
+    /// DIB section 재할당 + DC render target 재바인딩.
+    /// 크기가 자주 바뀌면 비용이 크지만, snap preview rect 변경 시에만 호출된다.
+    fn resize_dib(res: &mut OverlayResources, w: i32, h: i32) -> windows::core::Result<()> {
+        // 기존 DIB 해제 순서: 이전 비트맵 복구 → DeleteObject(hbitmap) → 새 DIB 선택.
+        let (new_hdc, new_bmp, new_prev) = Self::create_dib(w, h)?;
+        // 기존 DC 의 DIB 정리.
+        // 주의: CreateCompatibleDC 가 새 DC 를 만들었다. 기존 DC 도 교체한다.
+        let _ = unsafe { SelectObject(res.hdc_mem, res._previous_bmp) };
+        let _ = unsafe { DeleteObject(res.hbitmap) };
+        let _ = unsafe { DeleteDC(res.hdc_mem) };
+        res.hdc_mem = new_hdc;
+        res.hbitmap = new_bmp;
+        res._previous_bmp = new_prev;
+        let bind_rect = RECT {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+        };
+        unsafe { res.dc_render_target.BindDC(res.hdc_mem, &bind_rect)? };
         Ok(())
-    }
-
-    /// swap chain 백버퍼(0) → ID2D1Bitmap1 (렌더타겟) 바인딩.
-    fn bind_back_buffer(res: &OverlayResources) -> windows::core::Result<ID2D1Bitmap1> {
-        unsafe {
-            let back_buffer: IDXGISurface = res.swap_chain.GetBuffer(0)?;
-            let bitmap_props = D2D1_BITMAP_PROPERTIES1 {
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                },
-                dpiX: 96.0,
-                dpiY: 96.0,
-                bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                colorContext: std::mem::ManuallyDrop::new(None),
-            };
-            res.d2d_context
-                .CreateBitmapFromDxgiSurface(&back_buffer, Some(&bitmap_props))
-        }
     }
 
     /// 실제 장면 그리기 — snap 미리보기 점선 사각형만 그린다.
@@ -509,36 +451,24 @@ impl Win32LayeredOverlay {
     /// 창-로컬 좌표 (0, 0)~(sw, sh) 로 그린다. (sx, sy) 가 가상 화면 좌표더라도
     /// 창 자체가 (sx, sy) 에 배치되므로 로컬 원점이 된다.
     ///
-    /// ID2D1RenderTarget 계열 도형 메서드(Fill*/Draw*)는 HRESULT 를 반환하지 않고
-    /// 내부적으로 무시하므로 `?` 를 쓰지 않는다. EndDraw/Present 만 결과를 검사한다.
+    /// 그린 후 반드시 `UpdateLayeredWindow` 로 DIB 픽셀을 창에 반영해야 한다
+    /// (그렇지 않으면 화면에 나타나지 않는다).
     fn draw_scene(
         res: &OverlayResources,
         state: &OverlayDrawState,
         cfg: &OverlayConfig,
     ) -> windows::core::Result<()> {
-        let bitmap = Self::bind_back_buffer(res)?;
         unsafe {
-            res.d2d_context.SetTarget(&bitmap);
-            res.d2d_context.BeginDraw();
+            res.dc_render_target.BeginDraw();
 
-            // 투명하게 클리어.
-            res.d2d_context.Clear(Some(&D2D1_COLOR_F {
+            // 투명하게 클리어 (premultiplied alpha). Clear/Fill/DrawRectangle 은
+            // ID2D1RenderTarget 메서드로 반환형이 () 이다 (HRESULT 무시).
+            res.dc_render_target.Clear(Some(&D2D1_COLOR_F {
                 r: 0.0,
                 g: 0.0,
                 b: 0.0,
                 a: 0.0,
             }));
-
-            // 범용 단색 브러시 — 색은 SetColor 로 매번 변경.
-            let brush: ID2D1SolidColorBrush = res.d2d_context.CreateSolidColorBrush(
-                &D2D1_COLOR_F {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 1.0,
-                    a: 1.0,
-                },
-                None,
-            )?;
 
             // snap 미리보기 — 점선 사각형 외곽 + 반투명 채우기.
             // config.snap_preview 가 true 일 때만 그린다.
@@ -564,26 +494,65 @@ impl Win32LayeredOverlay {
                         // 채우기 (알파 0.20).
                         let mut fill_color = base_color;
                         fill_color.a = 0.20;
-                        brush.SetColor(&fill_color);
-                        res.d2d_context.FillRectangle(&rect, &brush);
+                        res.brush.SetColor(&fill_color);
+                        res.dc_render_target.FillRectangle(&rect, &res.brush);
                         // 외곽선 (알파 0.95).
                         let mut stroke_color = base_color;
                         stroke_color.a = 0.95;
-                        brush.SetColor(&stroke_color);
-                        res.d2d_context
-                            .DrawRectangle(&rect, &brush, 2.0, Some(&res.dash_style));
+                        res.brush.SetColor(&stroke_color);
+                        res.dc_render_target.DrawRectangle(
+                            &rect,
+                            &res.brush,
+                            2.0,
+                            Some(&res.dash_style),
+                        );
                     }
                 }
             }
 
-            res.d2d_context.EndDraw(None, None)?;
-            let _ = res.swap_chain.Present(1, DXGI_PRESENT(0));
+            res.dc_render_target.EndDraw(None, None)?;
+
+            // UpdateLayeredWindow 로 DIB 픽셀(ARGB premultiplied)을 layered 창에 합성.
+            Self::update_layered(res)?;
+        }
+        Ok(())
+    }
+
+    /// `UpdateLayeredWindow` 로 DIB 픽셀을 layered window 에 반영.
+    /// `ULW_ALPHA` + `AC_SRC_ALPHA` 조합으로 per-pixel 알파 합성.
+    fn update_layered(res: &OverlayResources) -> windows::core::Result<()> {
+        let pt_pos = POINT { x: 0, y: 0 };
+        let size = SIZE {
+            cx: res.width,
+            cy: res.height,
+        };
+        let pt_src = POINT { x: 0, y: 0 };
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        // hdcdst = None (화면 DC 를 시스템이 사용), hdcsrc = 메모리 DC.
+        // crkey = COLORREF 기본값(0) — ULW_ALPHA 모드에서는 무시됨.
+        unsafe {
+            UpdateLayeredWindow(
+                res.hwnd,
+                None,
+                Some(&pt_pos),
+                Some(&size),
+                res.hdc_mem,
+                Some(&pt_src),
+                windows::Win32::Foundation::COLORREF(0),
+                Some(&blend),
+                UPDATE_LAYERED_WINDOW_FLAGS(ULW_ALPHA.0),
+            )?;
         }
         Ok(())
     }
 
     /// "#RRGGBB" (또는 "RRGGBB") 헥스 색상 → D2D1_COLOR_F (알파 1.0).
-    /// 커서 알파는 별도(cursor_opacity)로 적용하고, snap preview 알파는 고정값을 사용.
+    /// snap preview 알파는 고정값(fill 0.20, stroke 0.95)을 사용.
     /// 파싱 실패 시 흰색(1,1,1)으로 폴백.
     fn parse_hex_color(hex: &str) -> D2D1_COLOR_F {
         let h = hex.trim_start_matches('#');
@@ -660,16 +629,15 @@ impl OverlayController for Win32LayeredOverlay {
 
 /// 오버레이 창의 window proc.
 ///
-/// WS_EX_NOREDIRECTIONBITMAP 창에서 WS_EX_TRANSPARENT 만으로는 hit-testing 이
-/// 통과하지 않을 수 있다. WM_NCHITTEST 에 HTTRANSPARENT 를 반환하여 모든 마우스
-/// 입력이 아래 창으로 통과하도록 보장한다.
+/// WS_EX_TRANSPARENT 만으로도 마우스 입력은 통과하지만, 일부 환경에서는
+/// 신뢰성을 보장하기 위해 WM_NCHITTEST 에 HTTRANSPARENT 를 반환한다
+/// (belt and suspenders).
 unsafe extern "system" fn overlay_wndproc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    // WM_NCHITTEST — 투명 처리. 마우스 입력이 아래 창으로 전달된다.
     if msg == WM_NCHITTEST {
         return LRESULT(HTTRANSPARENT as isize);
     }
