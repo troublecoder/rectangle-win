@@ -8,8 +8,12 @@
 //! snap 미리보기 사각형을 그린다. 색상/반경/투명도는 `OverlayConfig` 에서 읽어 반영.
 //!
 //! 설계 요점:
-//! - 창은 시작 시 한 번 생성되어 계속 떠 있다. `visible` 플래그로만 내용 노출을 제어
-//!   (창 자체를 show/hide 반복하지 않음 → 깜빡임 없음).
+//! - 창은 항상 "현재 snap preview 사각형"만큼의 크기로 위치한다.
+//!   preview 가 없으면(초기 lock-on/숨김) 1x1 로 축소한다.
+//!   이렇게 하면 항상-전체화면-최상위 창이 작업표시줄 팝업/컨텍스트 메뉴/
+//!   타이틀바 버튼을 가리는 문제를 막는다.
+//! - `visible` 플래그로만 내용 노출을 제어 (창 자체를 show/hide 반복하지 않음 →
+//!   깜빡임 없음). 단 창 크기/위치는 snap_preview rect 에 맞춰 매번 갱신한다.
 //! - 모든 상태 변경마다 전체 재그리기 (D2D 는 충분히 빠름).
 //! - D3D11/DComp 초기화 실패 시 `resources` 가 None 이며 redraw() 는 no-op.
 //!   snap 자체는 오버레이 없이도 동작 (graceful degradation).
@@ -56,11 +60,11 @@ use windows::Win32::Graphics::Dxgi::{
     IDXGISurface, IDXGISwapChain1,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, ShowWindow,
+    CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, SetWindowPos, ShowWindow,
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, CS_HREDRAW,
-    CS_VREDRAW, SW_HIDE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW,
-    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
-    HTTRANSPARENT, WM_NCHITTEST,
+    CS_VREDRAW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP, HTTRANSPARENT, WM_NCHITTEST,
 };
 
 /// 오버레이 렌더링 상태 — 그릴 내용을 보관.
@@ -358,19 +362,33 @@ impl Win32LayeredOverlay {
         Ok(hwnd)
     }
 
-    /// 현재 상태로 전체 재그리기 + 창 show/hide 제어.
+    /// 현재 상태로 전체 재그리기 + 창 위치/크기/표시 제어.
+    ///
+    /// 창은 항상 "현재 snap preview 사각형" 영역만 덮도록 위치/크기를 갱신한다.
+    /// preview 가 없으면(초기 lock-on 등) 1x1 로 축소하여 시스템 UI를 가리지 않는다.
     fn redraw(&self) {
-        let res_guard = self.resources.lock().unwrap();
-        let Some(res) = res_guard.as_ref() else {
+        let mut res_guard = self.resources.lock().unwrap();
+        let Some(res) = res_guard.as_mut() else {
             return; // 초기화 실패 — no-op
         };
         let state = self.state.lock().unwrap();
         if !state.visible {
             // 숨김 — 창 자체를 hide. 투명 클리어 불필요 (창이 안 보임).
+            // 숨김 시에는 창을 1x1 로 축소하여 재표시 시 시스템 UI를 가리지 않게 한다.
+            let _ = Self::position_overlay(res, 0, 0, 1, 1);
             unsafe { ShowWindow(res.hwnd, SW_HIDE) };
             return;
         }
-        // 표시 — 창을 보이게 하고(포커스 없이) 그리기.
+        // 표시 — 창을 snap preview rect (또는 축소 fallback) 에 맞춰 위치/크기.
+        let (x, y, w, h) = match state.snap_preview {
+            Some((sx, sy, sw, sh)) if sw > 0 && sh > 0 => (sx, sy, sw, sh),
+            // snap preview 가 없으면(초기 lock-on) 시스템 UI 가림 방지를 위해 1x1.
+            _ => (0, 0, 1, 1),
+        };
+        if let Err(e) = Self::position_overlay(res, x, y, w, h) {
+            eprintln!("[OVERLAY] position_overlay 실패: {e}");
+        }
+        // 창을 보이게 하고(포커스 없이) 그리기.
         unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
         // OverlayConfig 로드 실패 시 기본값으로 폴백 (오버레이는 계속 동작).
         let overlay_cfg = self
@@ -379,6 +397,63 @@ impl Win32LayeredOverlay {
             .map(|c| c.overlay)
             .unwrap_or_default();
         let _ = Self::draw_scene(res, &state, &overlay_cfg);
+    }
+
+    /// 오버레이 창을 지정한 사각형(x, y, w, h — 가상 화면 좌표)으로 이동/크기 변경.
+    ///
+    /// `SetWindowPos` 로 창 위치/크기를 갱신하고, 크기가 바뀌면 DXGI swap chain 의
+    /// 백버퍼를 `ResizeBuffers` 로 재할당한다. D2D 렌더타겟 bitmap 은 다음
+    /// `draw_scene` 호출 시 `bind_back_buffer` 에서 새 백버퍼로부터 재생성된다.
+    ///
+    /// 크기가 동일하면 swap chain resize 를 건너뛴다(불필요한 재할당 방지).
+    fn position_overlay(
+        res: &mut OverlayResources,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) -> windows::core::Result<()> {
+        // 음수/0 방지 — 최소 1x1.
+        let w = w.max(1);
+        let h = h.max(1);
+        // SAFETY: hwnd 는 유효한 오버레이 창. SWP_NOACTIVATE|SWP_NOZORDER 로
+        // 포커스/Z순서 변경 없이 위치/크기만 갱신.
+        unsafe {
+            SetWindowPos(
+                res.hwnd,
+                None,
+                x,
+                y,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )?;
+        }
+        // swap chain 크기가 바뀐 경우 백버퍼 재할당.
+        if res.width != w || res.height != h {
+            // D2D 타겟을 먼저 해제하지 않으면 ResizeBuffers 가 백버퍼 참조로 실패한다.
+            unsafe {
+                res.d2d_context.SetTarget(None);
+            }
+            // SAFETY: swap_chain 은 유효. buffer_count=2(생성 시와 동일),
+            // format 은 생성 시 사용한 B8G8R8A8_UNORM 유지, flags=0.
+            let r = unsafe {
+                res.swap_chain.ResizeBuffers(
+                    2,
+                    w as u32,
+                    h as u32,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    windows::Win32::Graphics::Dxgi::DXGI_SWAP_CHAIN_FLAG(0),
+                )
+            };
+            if let Err(e) = r {
+                eprintln!("[OVERLAY] ResizeBuffers 실패({w}x{h}): {e}");
+                return Err(e);
+            }
+            res.width = w;
+            res.height = h;
+        }
+        Ok(())
     }
 
     /// 백버퍼를 투명하게 클리어하고 Present.
@@ -429,6 +504,11 @@ impl Win32LayeredOverlay {
     /// - lock-on: `show_snap_preview` 만 호출 (active_sector=None → RED)
     /// - throw:   `highlight_sector` → `show_snap_preview` (active_sector=Some → BLUE)
     ///
+    /// **좌표계:** 오버레이 창은 항상 snap preview rect (sx, sy, sw, sh) 와 동일한
+    /// 위치/크기로 맞춰진다 (`redraw` → `position_overlay`). 따라서 사각형은
+    /// 창-로컬 좌표 (0, 0)~(sw, sh) 로 그린다. (sx, sy) 가 가상 화면 좌표더라도
+    /// 창 자체가 (sx, sy) 에 배치되므로 로컬 원점이 된다.
+    ///
     /// ID2D1RenderTarget 계열 도형 메서드(Fill*/Draw*)는 HRESULT 를 반환하지 않고
     /// 내부적으로 무시하므로 `?` 를 쓰지 않는다. EndDraw/Present 만 결과를 검사한다.
     fn draw_scene(
@@ -464,13 +544,14 @@ impl Win32LayeredOverlay {
             // config.snap_preview 가 true 일 때만 그린다.
             // 색상 전환: active_sector 유무로 lock-on(RED) vs throw-target(BLUE) 구분.
             if cfg.snap_preview {
-                if let Some((sx, sy, sw, sh)) = state.snap_preview {
+                if let Some((_sx, _sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
+                        // 창-로컬 좌표: 창이 preview rect 와 동일 크기이므로 (0,0)~(sw,sh).
                         let rect = D2D_RECT_F {
-                            left: sx as f32,
-                            top: sy as f32,
-                            right: (sx + sw) as f32,
-                            bottom: (sy + sh) as f32,
+                            left: 0.0,
+                            top: 0.0,
+                            right: sw as f32,
+                            bottom: sh as f32,
                         };
                         // active_sector == None → lock-on (cursor_color, RED)
                         // active_sector == Some → throw target (sector_highlight_color, BLUE)

@@ -27,9 +27,10 @@ use std::time::Duration;
 use windows::core::w;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL,
-    MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_CONTROL, VK_DOWN, VK_LEFT, VK_LWIN, VK_MENU, VK_RIGHT,
-    VK_RWIN, VK_SHIFT, VK_UP,
+    GetAsyncKeyState, INPUT_KEYBOARD, RegisterHotKey, SendInput, UnregisterHotKey,
+    HOT_KEY_MODIFIERS, KEYBDINPUT, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
+    VK_CONTROL, VK_DOWN, VK_LEFT, VK_LMENU, VK_LWIN, VK_MENU, VK_RIGHT, VK_RWIN, VK_SHIFT,
+    VK_UP, KEYEVENTF_KEYUP, INPUT, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, MsgWaitForMultipleObjects,
@@ -41,7 +42,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::application::keyboard_service::KeyboardService;
 use crate::application::ports::ConfigStore;
 use crate::application::snap_service::SnapService;
-use crate::domain::model::Direction;
+use crate::domain::model::{Direction, ModifierMode};
 use crate::infrastructure::win32_monitor::Win32MonitorProvider;
 
 /// 핫키 ID — 방향키 매핑. RegisterHotKey 의 id 파라미터로 사용.
@@ -289,12 +290,30 @@ fn modifiers_to_flags(mods: &[String]) -> HOT_KEY_MODIFIERS {
 
 /// 방향키 4종 핫키 등록.
 ///
-/// `config.keyboard.trigger_modifiers` (기본 Ctrl+Alt) 와 결합하여
-/// VK_LEFT/RIGHT/UP/DOWN 으로 4개의 핫키를 RegisterHotKey 한다.
-/// 실패(이미 점유된 조합) 시 eprintln 로깅 + 해당 핫키만 스킵.
+/// 사용할 modifier 조합은 `config.keyboard.modifier_mode` 에 따라 결정된다:
+/// - **Shared**: throw(커서) snap 과 동일 modifier 를 공유 → `throw.trigger_modifiers`
+///   사용 (기본 Win+Alt). Separate 모드와 달리 keyboard.trigger_modifiers 를
+///   쓰면 Win+Alt+방향키가 OS 로 가버려 우리 snap 이 발동하지 않는다.
+/// - **Separate**: 별개 modifier → `keyboard.trigger_modifiers` 사용 (기본 Ctrl+Alt).
+/// - **OverrideOs**: Win+방향키 OS snap 을 가로채는 모드. RegisterHotKey 로는
+///   Win+방향키를 잡을 수 없으므로(LL hook 필요) 여기서는 Separate 와 동일하게
+///   keyboard.trigger_modifiers 로 등록한다. 실제 OS snap 가로채기는 별도 경로.
+///
+/// config 로드 실패 시 Ctrl+Alt 폴백. 실패(이미 점유된 조합) 시 eprintln 로깅 +
+/// 해당 핫키만 스킵.
 fn register_hotkeys(hwnd: &HWND, config_store: &Arc<dyn ConfigStore>) {
     let modifiers = match config_store.load() {
-        Ok(cfg) => modifiers_to_flags(&cfg.keyboard.trigger_modifiers),
+        Ok(cfg) => {
+            let mods = match cfg.keyboard.modifier_mode {
+                // Shared: throw 와 modifier 공유. throw.trigger_modifiers 사용.
+                ModifierMode::Shared => &cfg.throw.trigger_modifiers,
+                // Separate / OverrideOs: keyboard 전용 modifier 사용.
+                ModifierMode::Separate | ModifierMode::OverrideOs => {
+                    &cfg.keyboard.trigger_modifiers
+                }
+            };
+            modifiers_to_flags(mods)
+        }
         Err(e) => {
             eprintln!("핫키 등록: config 로드 실패 ({e}) — Ctrl+Alt 폴백 사용");
             modifiers_to_flags(&["Ctrl".to_string(), "Alt".to_string()])
@@ -400,6 +419,10 @@ fn poll_throw(
         if let Err(e) = snap_service.on_modifier_released(false, cx, cy) {
             eprintln!("throw on_modifier_released 오류: {e}");
         }
+        // Win+Alt 해제 후 Alt 키 잔류 상태 해소 — 가짜 key-up 이벤트 전송.
+        // Win+Alt 를 뗄 때 Alt 가 먼저 떨어지면 윈도우가 메뉴 활성화를 시도하면서
+        // Alt 상태가 시스템 전역에 잔류하는 문제를 방지한다.
+        release_modifier_keys();
     }
 }
 
@@ -428,4 +451,40 @@ fn check_modifiers(mods: &[String]) -> bool {
         }
     }
     true
+}
+
+/// Win+Alt throw 해제 후 modifier 잔류 상태 해소.
+///
+/// Win+Alt 를 뗄 때 Alt 가 먼저 떨어지면 윈도우가 메뉴 활성화를 시도하면서
+/// Alt 상태가 시스템 전역에 잔류한다. 이를 방지하기 위해 가짜 key-up 이벤트를
+/// SendInput 으로 전송하여 modifier 상태를 강제 해제한다.
+fn release_modifier_keys() {
+    // SAFETY: SendInput 은 단순 입력 주입. 배열은 스택에 있고 길이는 정확.
+    let inputs = [
+        make_keyup_input(VK_LWIN.0 as u16),
+        make_keyup_input(VK_RWIN.0 as u16),
+        make_keyup_input(VK_LMENU.0 as u16),
+    ];
+    let _ = unsafe {
+        SendInput(
+            &inputs,
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+}
+
+/// VK 코드에 대한 key-up INPUT 구조체 생성.
+fn make_keyup_input(vk: u16) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
