@@ -35,6 +35,7 @@ pub struct KeyboardService {
     window_mover: Arc<dyn WindowMover>,
     monitor_provider: Arc<dyn MonitorProvider>,
     config_store: Arc<dyn ConfigStore>,
+    overlay: Arc<dyn crate::application::ports::OverlayController>,
     /// ←/→ throw 매핑 순회 인덱스.
     sector_index: Mutex<usize>,
     /// ↑/↓ 액션 체인 인덱스.
@@ -48,11 +49,13 @@ impl KeyboardService {
         window_mover: Arc<dyn WindowMover>,
         monitor_provider: Arc<dyn MonitorProvider>,
         config_store: Arc<dyn ConfigStore>,
+        overlay: Arc<dyn crate::application::ports::OverlayController>,
     ) -> Self {
         Self {
             window_mover,
             monitor_provider,
             config_store,
+            overlay,
             sector_index: Mutex::new(0),
             vindex: Mutex::new(0),
             last_window: Mutex::new(None),
@@ -167,6 +170,20 @@ impl KeyboardService {
         self.window_mover
             .apply_snap_target(window, target, &monitor)?;
 
+        // snap 후 새 창 위치를 overlay 로 표시 — 사용자가 어디에 락온되어 있는지 확인.
+        // show_reticle 으로 overlay 창을 visible + active_sector=None (RED lock-on 색상).
+        let center = monitor.center();
+        let _ = self.overlay.show_reticle(center.x, center.y, 8);
+        // snap 된 창의 새 rect 를 overlay 에 표시.
+        if let Ok(new_rect) = self.window_mover.get_window_rect(window) {
+            let _ = self.overlay.show_snap_preview(
+                new_rect.origin.x,
+                new_rect.origin.y,
+                new_rect.size.width,
+                new_rect.size.height,
+            );
+        }
+
         Ok(Some(target.id().to_string()))
     }
 
@@ -185,7 +202,8 @@ impl KeyboardService {
 mod tests {
     use super::*;
     use crate::application::mock::{
-        MockConfigStore, MockMonitorProvider, MockWindowCall, MockWindowMover,
+        MockConfigStore, MockMonitorProvider, MockOverlayController, MockWindowCall,
+        MockWindowMover,
     };
     use crate::domain::model::{SectorMap, SnapTarget};
 
@@ -212,10 +230,13 @@ mod tests {
             // keyboard.enabled = true (기본값)
         }
 
+        let overlay: Arc<dyn crate::application::ports::OverlayController> =
+            Arc::new(MockOverlayController::default());
         let service = KeyboardService::new(
             window_mover.clone(),
             monitor_provider.clone(),
             config_store.clone(),
+            overlay,
         );
 
         (service, window_mover, monitor_provider, config_store)

@@ -88,6 +88,7 @@ impl AppState {
             window_mover.clone(),
             monitor_provider.clone(),
             config_store.clone(),
+            overlay.clone(),
         ));
 
         Self {

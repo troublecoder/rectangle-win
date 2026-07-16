@@ -33,10 +33,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetCursorPos,
-    HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, PostThreadMessageW, RegisterClassExW,
-    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL,
-    WM_DISPLAYCHANGE, WM_KEYDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONDOWN,
-    WM_SYSKEYDOWN,
+    HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, PostMessageW, PostThreadMessageW,
+    RegisterClassExW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT,
+    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_USER,
 };
 
 use crate::application::keyboard_service::KeyboardService;
@@ -87,6 +87,8 @@ struct HookContext {
     snap_service: Arc<SnapService>,
     keyboard_service: Arc<KeyboardService>,
     monitor_provider: Arc<Win32MonitorProvider>,
+    /// message-only 창 핸들 — PostMessage 타겟. AtomicPtr 로 스레드 간 공유.
+    hwnd: std::sync::atomic::AtomicPtr<std::ffi::c_void>,
     /// throw origin / 활성 상태 추적 (콜백 스레드에서만 접근 → Mutex 불필요).
     origin: std::cell::UnsafeCell<Option<(i32, i32)>>,
     throw_active: AtomicBool,
@@ -149,11 +151,13 @@ impl Win32InputListener {
             update_config_static(&cfg);
         }
 
-        // OnceLock 에 컨텍스트 등록. 최초 1회만.
+        // OnceLock 에 컨텍스트 등록 — hwnd 없이 먼저 세팅.
+        // hwnd 는 run_message_loop 안에서 생성 후 업데이트.
         let _ = HOOK_CTX.set(HookContext {
             snap_service: snap_service.clone(),
             keyboard_service: keyboard_service.clone(),
             monitor_provider: monitor_provider.clone(),
+            hwnd: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
             origin: std::cell::UnsafeCell::new(None),
             throw_active: AtomicBool::new(false),
         });
@@ -219,7 +223,12 @@ impl Win32InputListener {
 /// 블로킹 대기하는 루프가 필요하다.
 fn run_message_loop() -> windows::core::Result<()> {
     // message-only 창 생성 (WM_DISPLAYCHANGE 수신용).
-    let _hwnd = create_message_window()?;
+    let hwnd = create_message_window()?;
+
+    // HookContext 의 hwnd 업데이트 (start() 에서 null 로 세팅됨).
+    if let Some(ctx) = HOOK_CTX.get() {
+        ctx.hwnd.store(hwnd.0, Ordering::Relaxed);
+    }
 
     // LL 훅 설치 — 반드시 메시지 루프 스레드에서.
     // SAFETY: HMODULE(None) — LL 훅은 DLL 이 아닌 자체 프로세스에서 설치 가능
@@ -249,6 +258,26 @@ fn run_message_loop() -> windows::core::Result<()> {
         if msg.message == WM_DISPLAYCHANGE {
             if let Some(ctx) = HOOK_CTX.get() {
                 ctx.monitor_provider.invalidate();
+            }
+        }
+
+        // throw modifier 전이 처리 — LL 훅 콜백에서 PostMessage 로 위임된 작업.
+        // 콜백 내에서 직접 호출하면 config 로드/D2D 렌더링으로 LowLevelHooksTimeout 초과.
+        if msg.message == WM_USER + 1 {
+            // throw pressed
+            if let Some(ctx) = HOOK_CTX.get() {
+                let (cx, cy) = current_cursor();
+                if let Err(e) = ctx.snap_service.on_modifier_pressed(cx, cy) {
+                    eprintln!("throw on_modifier_pressed 오류: {e}");
+                }
+            }
+        } else if msg.message == WM_USER + 2 {
+            // throw released
+            if let Some(ctx) = HOOK_CTX.get() {
+                let (cx, cy) = current_cursor();
+                if let Err(e) = ctx.snap_service.on_modifier_released(false, cx, cy) {
+                    eprintln!("throw on_modifier_released 오류: {e}");
+                }
             }
         }
 
@@ -409,10 +438,11 @@ fn handle_direction_key(ctx: &HookContext, dir: Direction, _vk: u32) -> bool {
 // throw modifier 상태 전이 (FancyZones 방식)
 // ────────────────────────────────────────────────────────────────────
 
-/// throw modifier 조합 전이를 검사해 SnapService 호출.
+/// throw modifier 조합 전이를 검사해 메시지 펌프로 처리 위임.
 ///
-/// 키보드 LL 훅은 매 키 이벤트마다 이 함수를 호출하므로 GetAsyncKeyState
-/// 폴링과 동일한 효과를 가진다 (FancyZones 와 동일한 방식).
+/// LL 훅 콜백에서 직접 SnapService 호출(config 로드 + D2D 렌더링)을 하면
+/// LowLevelHooksTimeout(300ms)에 걸려 지연/해제된다. 대신 PostMessage 로
+/// 사용자 정의 메시지를 보내고 메시지 펌프에서 처리한다.
 fn update_throw_state(ctx: &HookContext) {
     let held = check_throw_modifiers();
     let was_active = throw_active();
@@ -421,15 +451,18 @@ fn update_throw_state(ctx: &HookContext) {
         // Idle → Held 전이.
         let (cx, cy) = current_cursor();
         set_throw(true, Some((cx, cy)));
-        if let Err(e) = ctx.snap_service.on_modifier_pressed(cx, cy) {
-            eprintln!("throw on_modifier_pressed 오류: {e}");
+        // 메시지 펌프로 위임 — WM_USER+1 = throw pressed.
+        let hwnd = HWND(ctx.hwnd.load(Ordering::Relaxed));
+        unsafe {
+            PostMessageW(hwnd, WM_USER + 1, WPARAM(0), LPARAM(0));
         }
     } else if !held && was_active {
         // Held → Idle 전이. cancel=false (정상 release → snap 실행).
-        let (cx, cy) = current_cursor();
         set_throw(false, None);
-        if let Err(e) = ctx.snap_service.on_modifier_released(false, cx, cy) {
-            eprintln!("throw on_modifier_released 오류: {e}");
+        // 메시지 펌프로 위임 — WM_USER+2 = throw released.
+        let hwnd = HWND(ctx.hwnd.load(Ordering::Relaxed));
+        unsafe {
+            PostMessageW(hwnd, WM_USER + 2, WPARAM(0), LPARAM(0));
         }
     }
 }
