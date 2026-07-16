@@ -150,7 +150,16 @@ impl SnapService {
                 // 임계값 미만: Armed 유지, sector/distance 갱신 안 함.
             }
             SnapState::Tracking => {
-                inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
+                // Hysteresis — 현재 sector와 다른 sector가 계산되어도,
+                // 이동 거리 변화가 작으면(미세 흔들림) 기존 sector 유지.
+                // delta가 경계 근처에서 흔들려 섹터가 깜빡이는 현상 방지.
+                let new_sector = compute_sector(delta_x, delta_y);
+                let prev_distance = inner.fsm.throw_distance;
+                let distance_change = (distance - prev_distance).abs();
+                // 거리 변화가 15px 미만이면 기존 sector 유지 (미세 흔들림 필터).
+                if distance_change >= 15.0 {
+                    inner.fsm.current_sector = Some(new_sector);
+                }
                 inner.fsm.throw_distance = distance;
             }
         }

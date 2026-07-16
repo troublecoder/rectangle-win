@@ -113,9 +113,9 @@ impl WindowMover for Win32WindowMover {
                 ..
             } => {
                 let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, monitor);
-                // SetWindowPos 는 전체 창(테두리 포함) 영역을 지정.
-                // DPI-aware(per-monitor v2) 창에서는 DWM 이 테두리를 자동 처리하므로
-                // 추가 보정 없이 snap 영역 좌표를 그대로 사용하면 된다.
+                // SetWindowPos 에 snap 영역 좌표를 그대로 사용.
+                // DWM 테두리 보정은 시스템마다 결과가 달라 제거.
+                // snap_margin 설정으로 사용자가 여백 조절 가능.
                 let x = rect.origin.x;
                 let y = rect.origin.y;
                 let w = rect.size.width;

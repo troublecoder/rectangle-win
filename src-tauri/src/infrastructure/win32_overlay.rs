@@ -469,7 +469,7 @@ impl Win32LayeredOverlay {
             if cfg.snap_preview {
                 if let Some((sx, sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
-                        // 절대 좌표 — 창이 전체 가상 데스크톱이므로 그대로 사용.
+                        // 절대 좌표 — 프리뷰와 실제 SetWindowPos 가 동일한 좌표 사용.
                         let rect = D2D_RECT_F {
                             left: sx as f32,
                             top: sy as f32,
