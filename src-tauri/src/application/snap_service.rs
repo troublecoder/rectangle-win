@@ -76,14 +76,30 @@ impl SnapService {
     }
 
     /// Modifier 키 눌림 — 오버레이 표시 후 Armed 상태로 전이.
+    ///
+    /// Lock-on 표시: 현재 전경창의 위치를 snap_preview 사각형(RED, cursor_color)으로
+    /// 표시한다. `show_reticle` 은 오버레이 창을 visible 상태로 만드는 트리거 역할만 하고
+    /// 점은 그리지 않는다. `show_snap_preview` 가 active_sector=None 상태로 호출되므로
+    /// draw_scene 은 cursor_color (빨강)로 렌더링한다.
     pub fn on_modifier_pressed(&self, cursor_x: i32, cursor_y: i32) -> AppResult<()> {
         let config = self.config_store.load()?;
         let sector_count = config.overlay.sector_count;
 
         let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
         let center = monitor.center();
+        // show_reticle: overlay 창 visible + active_sector/snap_preview 초기화.
+        // 더 이상 커서 점을 그리지 않는다 (win32_overlay draw_scene 참조).
         self.overlay
             .show_reticle(center.x, center.y, sector_count)?;
+
+        // Lock-on: 현재 전경창의 rect 를 snap_preview 로 표시.
+        // active_sector 가 None 인 상태이므로 RED(cursor_color)로 그려진다.
+        if let Some(handle) = self.window_mover.get_foreground_window() {
+            if let Ok(rect) = self.window_mover.get_window_rect(handle) {
+                self.overlay
+                    .show_snap_preview(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)?;
+            }
+        }
 
         let mut inner = self.inner.lock();
         inner.state = SnapState::Armed;
@@ -95,6 +111,10 @@ impl SnapService {
     /// 마우스 이동 — Tracking 상태에서 섹터/거리를 갱신하고 오버레이에 반영.
     /// Armed 상태에서 첫 이동 시 Tracking 으로 전이하며 초기 섹터를 계산한다.
     /// Idle 상태에서는 무시한다(FSM의 idle 핸들러와 동일).
+    ///
+    /// 임계값(MIN_THROW_DISTANCE) 이하의 이동에서는 throw 로 간주하지 않고
+    /// lock-on(현재 창 RED 사각형) 상태를 유지한다. 임계값 이상에서만
+    /// highlight_sector + show_snap_preview(TARGET 영역, BLUE) 로 전환한다.
     pub fn on_mouse_moved(
         &self,
         cursor_x: i32,
@@ -102,6 +122,10 @@ impl SnapService {
         delta_x: f64,
         delta_y: f64,
     ) -> AppResult<()> {
+        // throw 로 간주하기 위한 최소 이동 거리 (픽셀).
+        // 이 값 미만에서는 lock-on(현재 창 RED 사각형)을 유지.
+        const MIN_THROW_DISTANCE: f64 = 8.0;
+
         let config = self.config_store.load()?;
         let sector_count = config.overlay.sector_count;
 
@@ -133,11 +157,16 @@ impl SnapService {
         }
 
         // Tracking 상태에서만 오버레이 갱신. 섹터값을 복사한 뒤 잠금을 풀고 overlay 호출.
+        // 임계값 미만의 throw_distance 에서는 lock-on 상태 유지 (preview 갱신 안 함).
         let sector_to_highlight = match inner.state {
-            SnapState::Tracking => inner.fsm.current_sector,
+            SnapState::Tracking if inner.fsm.throw_distance >= MIN_THROW_DISTANCE => {
+                inner.fsm.current_sector
+            }
             _ => None,
         };
         if let Some(sector) = sector_to_highlight {
+            // throw target 표시: highlight_sector 가 active_sector 를 Some 으로 만들어
+            // draw_scene 이 sector_highlight_color (BLUE)로 snap_preview 를 그리도록 함.
             self.overlay.highlight_sector(sector)?;
             // snap 미리보기 — 해당 sector 에 매핑된 SnapTarget 의 픽셀 영역을 표시.
             if let Ok(preview) = self.compute_snap_preview(sector, cursor_x, cursor_y) {
@@ -385,7 +414,9 @@ mod tests {
 
         service.on_modifier_released(false, 1060, 540).unwrap();
 
-        let calls = window_mover.snap_calls();
+        // on_modifier_pressed 가 lock-on 표시를 위해 GetRect 를 호출하므로
+        // ApplySnap 호출만 필터링하여 검증.
+        let calls = window_mover.apply_snap_calls();
         assert_eq!(calls.len(), 1);
         match &calls[0] {
             crate::application::mock::MockWindowCall::ApplySnap {
@@ -412,7 +443,7 @@ mod tests {
         // cancel=true -> snap 실행 안 함
         service.on_modifier_released(true, 1060, 540).unwrap();
 
-        assert!(window_mover.snap_calls().is_empty());
+        assert!(window_mover.apply_snap_calls().is_empty());
         assert_eq!(service.state(), "idle");
         assert!(service.current_sector().is_none());
     }
@@ -426,7 +457,7 @@ mod tests {
 
         service.on_modifier_released(false, 960, 540).unwrap();
 
-        assert!(window_mover.snap_calls().is_empty());
+        assert!(window_mover.apply_snap_calls().is_empty());
         assert_eq!(service.state(), "idle");
     }
 
@@ -442,7 +473,7 @@ mod tests {
 
         service.on_modifier_released(false, 1460, 540).unwrap();
 
-        let calls = window_mover.snap_calls();
+        let calls = window_mover.apply_snap_calls();
         assert_eq!(calls.len(), 1);
         if let crate::application::mock::MockWindowCall::ApplySnap { target_id, .. } = &calls[0] {
             assert_eq!(target_id, "maximize");
@@ -470,7 +501,7 @@ mod tests {
 
         service.on_modifier_released(false, 960, 640).unwrap();
 
-        assert!(window_mover.snap_calls().is_empty());
+        assert!(window_mover.apply_snap_calls().is_empty());
         assert_eq!(service.state(), "idle");
     }
 
@@ -484,5 +515,74 @@ mod tests {
         service.reset();
         assert_eq!(service.state(), "idle");
         assert!(service.current_sector().is_none());
+    }
+
+    #[test]
+    fn modifier_press_shows_lockon_current_window_rect() {
+        // Armed 진입 시 현재 전경창(1001)의 rect 가 snap_preview 로 표시되어야 한다.
+        // MockWindowMover::get_window_rect 는 (0,0,1920,1080) 을 반환.
+        let (service, _w, _m, overlay, _c) = make_service();
+        service.on_modifier_pressed(960, 540).unwrap();
+
+        // active_sector 는 None (lock-on 상태) — RED 색상 신호.
+        assert!(overlay.last_sector.lock().unwrap().is_none());
+        // snap_preview 가 현재 창 rect 로 설정되어 있어야 한다.
+        let preview = *overlay.last_snap_preview.lock().unwrap();
+        assert_eq!(preview, Some((0, 0, 1920, 1080)));
+    }
+
+    #[test]
+    fn mouse_move_below_threshold_keeps_lockon() {
+        // 임계값(8px) 미만 이동 시 snap_preview 가 갱신되지 않음 (lock-on 유지).
+        let (service, _w, _m, overlay, _c) = make_service();
+        service.on_modifier_pressed(960, 540).unwrap();
+        // lock-on rect 설정됨
+        assert_eq!(
+            *overlay.last_snap_preview.lock().unwrap(),
+            Some((0, 0, 1920, 1080))
+        );
+
+        // 5px 이동 (< 8.0 임계값) — preview 갱신 안 됨, sector 도 None 유지
+        service.on_mouse_moved(965, 540, 5.0, 0.0).unwrap();
+        assert_eq!(service.state(), "tracking");
+        assert!(overlay.last_sector.lock().unwrap().is_none());
+        // lock-on rect 가 그대로 유지됨
+        assert_eq!(
+            *overlay.last_snap_preview.lock().unwrap(),
+            Some((0, 0, 1920, 1080))
+        );
+    }
+
+    #[test]
+    fn mouse_move_above_threshold_switches_to_throw_target() {
+        // 임계값 이상 이동 시 highlight_sector + throw target snap_preview 로 전환.
+        let (service, _w, _m, overlay, _c) = make_service();
+        service.on_modifier_pressed(960, 540).unwrap();
+
+        // 100px 오른쪽 이동 (>= 8.0 임계값) — 섹터 0, throw target 표시
+        service.on_mouse_moved(1060, 540, 100.0, 0.0).unwrap();
+        assert_eq!(service.current_sector(), Some(0));
+        // active_sector 가 Some 으로 전환 — BLUE 색상 신호.
+        assert_eq!(*overlay.last_sector.lock().unwrap(), Some(0));
+        // snap_preview 가 throw target(right-half: x=960,y=0,w=960,h=1080) 으로 갱신.
+        let preview = *overlay.last_snap_preview.lock().unwrap();
+        assert!(preview.is_some());
+        let (x, y, w, h) = preview.unwrap();
+        // right-half 매핑: monitor 1920x1080 기준 x_ratio=0.5 -> x=960, w=960
+        assert_eq!(x, 960);
+        assert_eq!(y, 0);
+        assert_eq!(w, 960);
+        assert_eq!(h, 1080);
+    }
+
+    #[test]
+    fn lockon_skips_preview_when_no_foreground_window() {
+        // 전경창이 없으면 lock-on preview 없이 visible 만 true.
+        let (service, window_mover, _m, overlay, _c) = make_service();
+        *window_mover.foreground_window.lock().unwrap() = None;
+
+        service.on_modifier_pressed(960, 540).unwrap();
+        assert!(*overlay.visible.lock().unwrap());
+        assert!(overlay.last_snap_preview.lock().unwrap().is_none());
     }
 }

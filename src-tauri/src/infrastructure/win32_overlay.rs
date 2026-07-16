@@ -26,12 +26,12 @@ use std::sync::{Arc, Mutex};
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
     D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH, D2D1_DEBUG_LEVEL_NONE,
-    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_FACTORY_OPTIONS,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_OPTIONS,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_STROKE_STYLE_PROPERTIES1, D2D1CreateFactory,
     ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1, ID2D1SolidColorBrush,
     ID2D1StrokeStyle,
@@ -418,9 +418,17 @@ impl Win32LayeredOverlay {
         }
     }
 
-    /// 실제 장면 그리기 — Rectangle Pro 스타일: 커서 점 마커 + snap 미리보기 점선 사각형.
+    /// 실제 장면 그리기 — snap 미리보기 점선 사각형만 그린다.
     ///
-    /// 섹터 부채꼴/중심점 원은 제거되었다. 색상/반경/투명도는 `OverlayConfig` 에서 읽는다.
+    /// 더 이상 커서 점/원/레티클 마커를 그리지 않는다. 색상은 `active_sector` 의
+    /// 유무에 따라 자동으로 전환된다 (Option 2):
+    /// - `active_sector == None` (lock-on, 현재 창): `cursor_color` (RED #E53935)
+    /// - `active_sector == Some(_)` (throw target): `sector_highlight_color` (BLUE #3B82F6)
+    ///
+    /// 호출 패턴:
+    /// - lock-on: `show_snap_preview` 만 호출 (active_sector=None → RED)
+    /// - throw:   `highlight_sector` → `show_snap_preview` (active_sector=Some → BLUE)
+    ///
     /// ID2D1RenderTarget 계열 도형 메서드(Fill*/Draw*)는 HRESULT 를 반환하지 않고
     /// 내부적으로 무시하므로 `?` 를 쓰지 않는다. EndDraw/Present 만 결과를 검사한다.
     fn draw_scene(
@@ -452,29 +460,9 @@ impl Win32LayeredOverlay {
                 None,
             )?;
 
-            // 커서 점 마커 — 커서 위치(없으면 center 로 폴백)에 채운 원.
-            // config.cursor_indicator 가 true 일 때만 그린다.
-            if cfg.cursor_indicator {
-                let pos = state.cursor.or(state.center);
-                if let Some((mx, my)) = pos {
-                    let mut color = Self::parse_hex_color(&cfg.cursor_color);
-                    color.a = cfg.cursor_opacity as f32;
-                    brush.SetColor(&color);
-                    let radius = cfg.cursor_radius as f32;
-                    let cursor_ellipse = D2D1_ELLIPSE {
-                        point: D2D_POINT_2F {
-                            x: mx as f32,
-                            y: my as f32,
-                        },
-                        radiusX: radius,
-                        radiusY: radius,
-                    };
-                    res.d2d_context.FillEllipse(&cursor_ellipse, &brush);
-                }
-            }
-
             // snap 미리보기 — 점선 사각형 외곽 + 반투명 채우기.
             // config.snap_preview 가 true 일 때만 그린다.
+            // 색상 전환: active_sector 유무로 lock-on(RED) vs throw-target(BLUE) 구분.
             if cfg.snap_preview {
                 if let Some((sx, sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
@@ -484,7 +472,14 @@ impl Win32LayeredOverlay {
                             right: (sx + sw) as f32,
                             bottom: (sy + sh) as f32,
                         };
-                        let base_color = Self::parse_hex_color(&cfg.sector_highlight_color);
+                        // active_sector == None → lock-on (cursor_color, RED)
+                        // active_sector == Some → throw target (sector_highlight_color, BLUE)
+                        let color_hex = if state.active_sector.is_some() {
+                            &cfg.sector_highlight_color
+                        } else {
+                            &cfg.cursor_color
+                        };
+                        let base_color = Self::parse_hex_color(color_hex);
                         // 채우기 (알파 0.20).
                         let mut fill_color = base_color;
                         fill_color.a = 0.20;
@@ -533,6 +528,10 @@ impl Win32LayeredOverlay {
 }
 
 impl OverlayController for Win32LayeredOverlay {
+    /// Lock-on 진입 트리거 — 오버레이 창을 visible 상태로 전환한다.
+    /// 더 이상 커서 점/레티클을 그리지 않는다. snap_preview 별도 표시 필요.
+    /// active_sector=None, snap_preview=None 으로 클리어하여 다음 show_snap_preview 가
+    /// RED(lock-on) 로 그려지도록 한다.
     fn show_reticle(&self, center_x: i32, center_y: i32, sector_count: u8) -> AppResult<()> {
         let mut state = self.state.lock().unwrap();
         state.visible = true;
