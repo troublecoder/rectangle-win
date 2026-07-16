@@ -47,14 +47,16 @@ use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1,
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC1,
+    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2,
+    IDXGISurface, IDXGISwapChain1,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, ShowWindow,
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, CS_HREDRAW,
-    CS_VREDRAW, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW, WS_EX_NOACTIVATE,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CS_VREDRAW, SW_HIDE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    HTTRANSPARENT, WM_NCHITTEST,
 };
 
 use crate::application::errors::AppResult;
@@ -118,7 +120,16 @@ unsafe impl Sync for OverlayResources {}
 
 impl Win32LayeredOverlay {
     pub fn new() -> Self {
-        let resources = Self::init_resources().ok();
+        let resources = match Self::init_resources() {
+            Ok(r) => {
+                eprintln!("[OVERLAY] init_resources 성공 (창+DComp 준비됨)");
+                Some(r)
+            }
+            Err(e) => {
+                eprintln!("[OVERLAY] init_resources 실패: {e} — 오버레이 비활성, snap만 작동");
+                None
+            }
+        };
         Self {
             state: Mutex::new(OverlayDrawState::default()),
             resources: Mutex::new(resources),
@@ -137,28 +148,67 @@ impl Win32LayeredOverlay {
             ));
         }
 
-        // 2. D3D11 device 생성.
+        // 2. D3D11 device 생성 — 명시적 feature level 배열 (11_1 → 10_1).
+        // 빈 배열(Some(&[]))은 일부 환경에서 DXGI_ERROR_UNSUPPORTED(0x887A0004)로 실패.
+        let feature_levels = [
+            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_1,
+            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0,
+            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_10_1,
+            windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_10_0,
+        ];
         let mut d3d_device: Option<ID3D11Device> = None;
-        unsafe {
+        let d3d_result = unsafe {
             D3D11CreateDevice(
                 None,
                 D3D_DRIVER_TYPE_HARDWARE,
                 windows::Win32::Foundation::HMODULE::default(),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                Some(&[]),
+                Some(&feature_levels),
                 D3D11_SDK_VERSION,
                 Some(&mut d3d_device),
                 None,
                 None,
-            )?;
-        }
-        let d3d_device = d3d_device.ok_or_else(|| {
-            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
-        })?;
+            )
+        };
+        let d3d_device = match d3d_result {
+            Ok(()) => d3d_device.ok_or_else(|| {
+                windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+            })?,
+            Err(hardware_err) => {
+                // 하드웨어 device 실패 시 WARP(소프트웨어 래스터라이저)로 폴백.
+                eprintln!("[OVERLAY] D3D11 하드웨어 실패({hardware_err}), WARP 폴백 시도");
+                let mut warp_device: Option<ID3D11Device> = None;
+                unsafe {
+                    D3D11CreateDevice(
+                        None,
+                        windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_WARP,
+                        windows::Win32::Foundation::HMODULE::default(),
+                        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                        Some(&feature_levels),
+                        D3D11_SDK_VERSION,
+                        Some(&mut warp_device),
+                        None,
+                        None,
+                    )?;
+                }
+                warp_device.ok_or_else(|| {
+                    windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+                })?
+            }
+        };
 
         // 3. DXGI factory + swap chain (composition용, premultiplied alpha).
-        let dxgi_device: IDXGIDevice = d3d_device.cast()?;
-        let dxgi_factory: IDXGIFactory2 = unsafe { dxgi_device.GetParent()? };
+        // IDXGIDevice.GetParent::<IDXGIFactory2> 는 직접 부모(IDXGIAdapter)만
+        // 반환하므로 실패한다. 대신 CreateDXGIFactory2 로 factory 를 직접 생성.
+        let dxgi_device: IDXGIDevice = d3d_device.cast().map_err(|e| {
+            eprintln!("[OVERLAY] d3d_device.cast::<IDXGIDevice> 실패: {e}");
+            e
+        })?;
+        let dxgi_factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }
+            .map_err(|e| {
+                eprintln!("[OVERLAY] CreateDXGIFactory2 실패: {e}");
+                e
+            })?;
 
         let swap_desc = DXGI_SWAP_CHAIN_DESC1 {
             Width: width as u32,
@@ -171,8 +221,11 @@ impl Win32LayeredOverlay {
             AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
             ..Default::default()
         };
-        let swap_chain =
-            unsafe { dxgi_factory.CreateSwapChainForComposition(&dxgi_device, &swap_desc, None)? };
+        let swap_chain = unsafe { dxgi_factory.CreateSwapChainForComposition(&dxgi_device, &swap_desc, None) }
+            .map_err(|e| {
+                eprintln!("[OVERLAY] CreateSwapChainForComposition 실패: {e}");
+                e
+            })?;
 
         // 4. 오버레이 창 생성 (layered-transparent-topmost-noactivate).
         let hwnd = Self::create_overlay_window(x, y, width, height)?;
@@ -292,13 +345,16 @@ impl Win32LayeredOverlay {
             )?
         };
 
-        // SAFETY: hwnd 는 방금 생성된 유효 창. SW_SHOWNOACTIVATE 로 포커스 훔치지 않고 표시.
-        let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+        // 창은 생성 후 숨김 상태로 시작. throw 활성(visible=true) 시에만 표시.
+        // 항상 떠 있는 전체화면 투명 창은 WS_EX_TRANSPARENT/HTTRANSPARENT 와 무관하게
+        // 일부 환경에서 입력을 삼키는 문제가 있으므로, 숨김/표시로 제어한다.
+        // (DirectComposition + NOREDIRECTIONBITMAP 은 창을 숨겼다 보여도 리소스 유지)
+        // ShowWindow 호출하지 않음 — 숨김 상태로 둠.
 
         Ok(hwnd)
     }
 
-    /// 현재 상태로 전체 재그리기.
+    /// 현재 상태로 전체 재그리기 + 창 show/hide 제어.
     fn redraw(&self) {
         let res_guard = self.resources.lock().unwrap();
         let Some(res) = res_guard.as_ref() else {
@@ -306,9 +362,12 @@ impl Win32LayeredOverlay {
         };
         let state = self.state.lock().unwrap();
         if !state.visible {
-            let _ = Self::clear_buffer(res);
+            // 숨김 — 창 자체를 hide. 투명 클리어 불필요 (창이 안 보임).
+            unsafe { ShowWindow(res.hwnd, SW_HIDE) };
             return;
         }
+        // 표시 — 창을 보이게 하고(포커스 없이) 그리기.
+        unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
         let _ = Self::draw_scene(res, &state);
     }
 
@@ -610,15 +669,20 @@ impl OverlayController for Win32LayeredOverlay {
     }
 }
 
-/// 오버레이 창의 window proc — 아무 처리 없이 DefWindowProcW 로 전달.
+/// 오버레이 창의 window proc.
 ///
-/// 창은 입력을 받지 않고(WS_EX_TRANSPARENT) 단지 DirectComposition 타겟이므로,
-/// WM_PAINT 등도 기본 처리만 수행.
+/// WS_EX_NOREDIRECTIONBITMAP 창에서 WS_EX_TRANSPARENT 만으로는 hit-testing 이
+/// 통과하지 않을 수 있다. WM_NCHITTEST 에 HTTRANSPARENT 를 반환하여 모든 마우스
+/// 입력이 아래 창으로 통과하도록 보장한다.
 unsafe extern "system" fn overlay_wndproc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // WM_NCHITTEST — 투명 처리. 마우스 입력이 아래 창으로 전달된다.
+    if msg == WM_NCHITTEST {
+        return LRESULT(HTTRANSPARENT as isize);
+    }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }

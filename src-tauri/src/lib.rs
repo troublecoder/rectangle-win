@@ -6,6 +6,17 @@ pub mod presentation;
 use tauri::{Manager, WindowEvent};
 
 pub fn run() {
+    // Per-Monitor DPI-Aware V2 설정 — GetSystemMetrics/모니터 좌표가 물리 픽셀 기준으로
+    // 일관되게 동작. 125%/150% 스케일 환경에서 오버레이 창 크기와 snap 좌표가 맞지 않는
+    // 문제(DPI 스케일링 불일치)를 해결한다.
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::HiDpi::{
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+        };
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(

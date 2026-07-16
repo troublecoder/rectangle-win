@@ -144,7 +144,9 @@ fn monitor_bounds_from_hmonitor(hmon: HMONITOR) -> Option<MonitorBounds> {
     if !ok.as_bool() {
         return None;
     }
-    let rc = info.rcMonitor;
+    // rcWork(작업 영역) 사용 — 작업표시줄 영역 제외.
+    // rcMonitor 는 작업표시줄을 포함한 전체 화면이어서 snap 시 하단이 잘림.
+    let rc = info.rcWork;
     Some(MonitorBounds::new(
         rc.left,
         rc.top,
