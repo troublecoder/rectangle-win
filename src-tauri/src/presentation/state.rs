@@ -72,7 +72,7 @@ impl AppState {
         // 비Windows 는 TauriOverlay (emit 없이 상태만 보관, CI/컴파일용).
         #[cfg(windows)]
         let overlay: Arc<dyn OverlayController> = Arc::new(
-            crate::infrastructure::win32_overlay::Win32LayeredOverlay::new(),
+            crate::infrastructure::win32_overlay::Win32LayeredOverlay::new(config_store.clone()),
         );
         #[cfg(not(windows))]
         let overlay: Arc<dyn OverlayController> =

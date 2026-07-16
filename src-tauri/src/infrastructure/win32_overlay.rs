@@ -4,7 +4,8 @@
 //!
 //! `WS_EX_NOREDIRECTIONBITMAP | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE`
 //! 창을 만들고, D3D11/DXGI/Direct2D/DirectComposition 파이프라인으로 GPU 직접 합성.
-//! [`OverlayController`] trait 구현 — 섹터 부채꼴, 중심점, snap 미리보기 사각형을 그린다.
+//! [`OverlayController`] trait 구현 — Rectangle Pro 스타일의 커서 점 마커와
+//! snap 미리보기 사각형을 그린다. 색상/반경/투명도는 `OverlayConfig` 에서 읽어 반영.
 //!
 //! 설계 요점:
 //! - 창은 시작 시 한 번 생성되어 계속 떠 있다. `visible` 플래그로만 내용 노출을 제어
@@ -20,22 +21,25 @@
 //!
 //! [`OverlayController`]: crate::application::ports::OverlayController
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_CLOSED,
-    D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_F,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-    D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH,
-    D2D1_DEBUG_LEVEL_NONE, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_FACTORY_OPTIONS,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_STROKE_STYLE_PROPERTIES1, D2D1_SWEEP_DIRECTION_CLOCKWISE,
-    D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1CreateFactory, ID2D1Bitmap1, ID2D1Device,
-    ID2D1DeviceContext, ID2D1Factory1, ID2D1PathGeometry, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
+    D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH, D2D1_DEBUG_LEVEL_NONE,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_FACTORY_OPTIONS,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_STROKE_STYLE_PROPERTIES1, D2D1CreateFactory,
+    ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1, ID2D1SolidColorBrush,
+    ID2D1StrokeStyle,
 };
+
+use crate::application::errors::AppResult;
+use crate::application::ports::{ConfigStore, OverlayController};
+use crate::domain::model::OverlayConfig;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, ID3D11Device,
@@ -59,9 +63,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HTTRANSPARENT, WM_NCHITTEST,
 };
 
-use crate::application::errors::AppResult;
-use crate::application::ports::OverlayController;
-
 /// 오버레이 렌더링 상태 — 그릴 내용을 보관.
 #[derive(Default)]
 struct OverlayDrawState {
@@ -83,6 +84,8 @@ pub struct Win32LayeredOverlay {
     // D3D11/DXGI/D2D/DComp 리소스 — 초기화 후 불변.
     // 초기화 실패 시 None (graceful degradation: snap만 작동, 오버레이 없음).
     resources: Mutex<Option<OverlayResources>>,
+    // 설정 저장소 — redraw 시 OverlayConfig 색상/반경/투명도를 로드.
+    config_store: Arc<dyn ConfigStore>,
 }
 
 /// GPU 렌더링 리소스 묶음.
@@ -119,7 +122,7 @@ unsafe impl Send for OverlayResources {}
 unsafe impl Sync for OverlayResources {}
 
 impl Win32LayeredOverlay {
-    pub fn new() -> Self {
+    pub fn new(config_store: Arc<dyn ConfigStore>) -> Self {
         let resources = match Self::init_resources() {
             Ok(r) => {
                 eprintln!("[OVERLAY] init_resources 성공 (창+DComp 준비됨)");
@@ -133,6 +136,7 @@ impl Win32LayeredOverlay {
         Self {
             state: Mutex::new(OverlayDrawState::default()),
             resources: Mutex::new(resources),
+            config_store,
         }
     }
 
@@ -368,7 +372,13 @@ impl Win32LayeredOverlay {
         }
         // 표시 — 창을 보이게 하고(포커스 없이) 그리기.
         unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
-        let _ = Self::draw_scene(res, &state);
+        // OverlayConfig 로드 실패 시 기본값으로 폴백 (오버레이는 계속 동작).
+        let overlay_cfg = self
+            .config_store
+            .load()
+            .map(|c| c.overlay)
+            .unwrap_or_default();
+        let _ = Self::draw_scene(res, &state, &overlay_cfg);
     }
 
     /// 백버퍼를 투명하게 클리어하고 Present.
@@ -408,11 +418,16 @@ impl Win32LayeredOverlay {
         }
     }
 
-    /// 실제 장면 그리기 — 섹터 부채꼴, 중심점 원, snap 미리보기 점선 사각형, 커서 표시.
+    /// 실제 장면 그리기 — Rectangle Pro 스타일: 커서 점 마커 + snap 미리보기 점선 사각형.
     ///
+    /// 섹터 부채꼴/중심점 원은 제거되었다. 색상/반경/투명도는 `OverlayConfig` 에서 읽는다.
     /// ID2D1RenderTarget 계열 도형 메서드(Fill*/Draw*)는 HRESULT 를 반환하지 않고
     /// 내부적으로 무시하므로 `?` 를 쓰지 않는다. EndDraw/Present 만 결과를 검사한다.
-    fn draw_scene(res: &OverlayResources, state: &OverlayDrawState) -> windows::core::Result<()> {
+    fn draw_scene(
+        res: &OverlayResources,
+        state: &OverlayDrawState,
+        cfg: &OverlayConfig,
+    ) -> windows::core::Result<()> {
         let bitmap = Self::bind_back_buffer(res)?;
         unsafe {
             res.d2d_context.SetTarget(&bitmap);
@@ -437,108 +452,51 @@ impl Win32LayeredOverlay {
                 None,
             )?;
 
-            // 섹터 부채꼴 + 중심점.
-            if let Some((cx, cy)) = state.center {
-                let cx_f = cx as f32;
-                let cy_f = cy as f32;
-                let radius = 220.0_f32.min(res.width as f32 / 3.0);
-                let inner = 18.0_f32;
-
-                let sectors = state.sector_count.max(1) as u32;
-                for i in 0..sectors {
-                    let a0 = (i as f32) * std::f32::consts::TAU / (sectors as f32)
-                        - std::f32::consts::FRAC_PI_2;
-                    let a1 = ((i + 1) as f32) * std::f32::consts::TAU / (sectors as f32)
-                        - std::f32::consts::FRAC_PI_2;
-                    let is_active = state.active_sector == Some(i as u8);
-
-                    if let Ok(geo) = Self::build_pie_segment(
-                        &res.d2d_factory,
-                        cx_f,
-                        cy_f,
-                        inner,
-                        radius,
-                        a0,
-                        a1,
-                    ) {
-                        if is_active {
-                            brush.SetColor(&D2D1_COLOR_F {
-                                r: 0.36,
-                                g: 0.70,
-                                b: 0.98,
-                                a: 0.55,
-                            });
-                            res.d2d_context.FillGeometry(&geo, &brush, None);
-                        }
-                        brush.SetColor(&D2D1_COLOR_F {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 0.85,
-                        });
-                        res.d2d_context.DrawGeometry(&geo, &brush, 1.5, None);
-                    }
-                }
-
-                // 중심점 작은 원 (외곽선).
-                brush.SetColor(&D2D1_COLOR_F {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 1.0,
-                    a: 0.9,
-                });
-                let center_ellipse = D2D1_ELLIPSE {
-                    point: D2D_POINT_2F { x: cx_f, y: cy_f },
-                    radiusX: 6.0,
-                    radiusY: 6.0,
-                };
-                res.d2d_context
-                    .DrawEllipse(&center_ellipse, &brush, 2.0, None);
-
-                // 커서 위치 작은 점.
-                if let Some((mx, my)) = state.cursor {
-                    brush.SetColor(&D2D1_COLOR_F {
-                        r: 0.36,
-                        g: 0.70,
-                        b: 0.98,
-                        a: 0.9,
-                    });
+            // 커서 점 마커 — 커서 위치(없으면 center 로 폴백)에 채운 원.
+            // config.cursor_indicator 가 true 일 때만 그린다.
+            if cfg.cursor_indicator {
+                let pos = state.cursor.or(state.center);
+                if let Some((mx, my)) = pos {
+                    let mut color = Self::parse_hex_color(&cfg.cursor_color);
+                    color.a = cfg.cursor_opacity as f32;
+                    brush.SetColor(&color);
+                    let radius = cfg.cursor_radius as f32;
                     let cursor_ellipse = D2D1_ELLIPSE {
                         point: D2D_POINT_2F {
                             x: mx as f32,
                             y: my as f32,
                         },
-                        radiusX: 4.0,
-                        radiusY: 4.0,
+                        radiusX: radius,
+                        radiusY: radius,
                     };
                     res.d2d_context.FillEllipse(&cursor_ellipse, &brush);
                 }
             }
 
             // snap 미리보기 — 점선 사각형 외곽 + 반투명 채우기.
-            if let Some((sx, sy, sw, sh)) = state.snap_preview {
-                if sw > 0 && sh > 0 {
-                    let rect = D2D_RECT_F {
-                        left: sx as f32,
-                        top: sy as f32,
-                        right: (sx + sw) as f32,
-                        bottom: (sy + sh) as f32,
-                    };
-                    brush.SetColor(&D2D1_COLOR_F {
-                        r: 0.36,
-                        g: 0.70,
-                        b: 0.98,
-                        a: 0.20,
-                    });
-                    res.d2d_context.FillRectangle(&rect, &brush);
-                    brush.SetColor(&D2D1_COLOR_F {
-                        r: 0.36,
-                        g: 0.70,
-                        b: 0.98,
-                        a: 0.95,
-                    });
-                    res.d2d_context
-                        .DrawRectangle(&rect, &brush, 2.0, Some(&res.dash_style));
+            // config.snap_preview 가 true 일 때만 그린다.
+            if cfg.snap_preview {
+                if let Some((sx, sy, sw, sh)) = state.snap_preview {
+                    if sw > 0 && sh > 0 {
+                        let rect = D2D_RECT_F {
+                            left: sx as f32,
+                            top: sy as f32,
+                            right: (sx + sw) as f32,
+                            bottom: (sy + sh) as f32,
+                        };
+                        let base_color = Self::parse_hex_color(&cfg.sector_highlight_color);
+                        // 채우기 (알파 0.20).
+                        let mut fill_color = base_color;
+                        fill_color.a = 0.20;
+                        brush.SetColor(&fill_color);
+                        res.d2d_context.FillRectangle(&rect, &brush);
+                        // 외곽선 (알파 0.95).
+                        let mut stroke_color = base_color;
+                        stroke_color.a = 0.95;
+                        brush.SetColor(&stroke_color);
+                        res.d2d_context
+                            .DrawRectangle(&rect, &brush, 2.0, Some(&res.dash_style));
+                    }
                 }
             }
 
@@ -548,78 +506,29 @@ impl Win32LayeredOverlay {
         Ok(())
     }
 
-    /// 부채꼴 한 조각(path geometry) 생성.
-    ///
-    /// 중심 (cx, cy), 내반경 inner, 외반경 outer, 각도 a0..a1 (라디안, 화면 좌표계).
-    /// path: outer 시작점 → outer 호 → inner 끝점 → inner 역호(반시계방향) 로 닫음.
-    fn build_pie_segment(
-        factory: &ID2D1Factory1,
-        cx: f32,
-        cy: f32,
-        inner: f32,
-        outer: f32,
-        a0: f32,
-        a1: f32,
-    ) -> windows::core::Result<ID2D1PathGeometry> {
-        // ID2D1Factory1::CreatePathGeometry 는 ID2D1PathGeometry1 을 반환하므로
-        // base ID2D1PathGeometry 로 캐스트.
-        let geometry: ID2D1PathGeometry = unsafe { factory.CreatePathGeometry()?.cast()? };
-        let sink = unsafe { geometry.Open()? };
-
-        let outer_start = D2D_POINT_2F {
-            x: cx + outer * a0.cos(),
-            y: cy + outer * a0.sin(),
-        };
-        let outer_end = D2D_POINT_2F {
-            x: cx + outer * a1.cos(),
-            y: cy + outer * a1.sin(),
-        };
-        let inner_end = D2D_POINT_2F {
-            x: cx + inner * a1.cos(),
-            y: cy + inner * a1.sin(),
-        };
-
-        let arc_size = D2D1_ARC_SIZE_SMALL;
-
-        unsafe {
-            sink.BeginFigure(outer_start, D2D1_FIGURE_BEGIN_HOLLOW);
-            // 외곽 호 (시계방향, a0 → a1).
-            sink.AddArc(&D2D1_ARC_SEGMENT {
-                point: outer_end,
-                size: D2D_SIZE_F {
-                    width: outer,
-                    height: outer,
+    /// "#RRGGBB" (또는 "RRGGBB") 헥스 색상 → D2D1_COLOR_F (알파 1.0).
+    /// 커서 알파는 별도(cursor_opacity)로 적용하고, snap preview 알파는 고정값을 사용.
+    /// 파싱 실패 시 흰색(1,1,1)으로 폴백.
+    fn parse_hex_color(hex: &str) -> D2D1_COLOR_F {
+        let h = hex.trim_start_matches('#');
+        let parse = |bytes: &str| u8::from_str_radix(bytes, 16).map(|v| v as f32 / 255.0);
+        match (h.len(), h.get(0..2), h.get(2..4), h.get(4..6)) {
+            (6, Some(r), Some(g), Some(b)) => match (parse(r), parse(g), parse(b)) {
+                (Ok(r), Ok(g), Ok(b)) => D2D1_COLOR_F { r, g, b, a: 1.0 },
+                _ => D2D1_COLOR_F {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
                 },
-                rotationAngle: 0.0,
-                sweepDirection: D2D1_SWEEP_DIRECTION_CLOCKWISE,
-                arcSize: arc_size,
-            });
-            // 외곽 끝 → 안쪽 끝 (직선).
-            sink.AddLine(inner_end);
-            // 안쪽 역호 (반시계방향, a1 → a0).
-            sink.AddArc(&D2D1_ARC_SEGMENT {
-                point: D2D_POINT_2F {
-                    x: cx + inner * a0.cos(),
-                    y: cy + inner * a0.sin(),
-                },
-                size: D2D_SIZE_F {
-                    width: inner,
-                    height: inner,
-                },
-                rotationAngle: 0.0,
-                sweepDirection: D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
-                arcSize: arc_size,
-            });
-            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
-            sink.Close()?;
+            },
+            _ => D2D1_COLOR_F {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
         }
-        Ok(geometry)
-    }
-}
-
-impl Default for Win32LayeredOverlay {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
