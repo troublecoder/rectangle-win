@@ -42,6 +42,7 @@ use crate::application::keyboard_service::KeyboardService;
 use crate::application::ports::ConfigStore;
 use crate::application::snap_service::SnapService;
 use crate::domain::model::Direction;
+use crate::infrastructure::win32_monitor::Win32MonitorProvider;
 
 /// 핫키 ID — 방향키 매핑. RegisterHotKey 의 id 파라미터로 사용.
 const HOTKEY_LEFT: i32 = 1;
@@ -52,6 +53,10 @@ const HOTKEY_DOWN: i32 = 4;
 /// 폴링 주기 (마우스 throw modifier 감지). 약 60fps.
 /// MsgWaitForMultipleObjects 의 dwmilliseconds(u32) 에 직접 전달.
 const POLL_INTERVAL_MS: u32 = 16;
+
+/// WM_DISPLAYCHANGE — 모니터 연결/해제/DPI 변경 시 브로드캐스트 (winuser.h).
+/// 0x007E. 수신 시 MonitorProvider 캐시를 무효화한다.
+const WM_DISPLAYCHANGE: u32 = 0x007E;
 
 /// 입력 리스너. `start()` 로 전용 스레드를 시작한다.
 ///
@@ -79,6 +84,7 @@ impl Win32InputListener {
         snap_service: Arc<SnapService>,
         keyboard_service: Arc<KeyboardService>,
         config_store: Arc<dyn ConfigStore>,
+        monitor_provider: Arc<Win32MonitorProvider>,
     ) -> Self {
         // 스레드 종료를 위해 thread id 를 부모로 반환.
         // thread::Builder 에서 spawn 직전에 thread id 를 알 수 없으므로,
@@ -106,6 +112,7 @@ impl Win32InputListener {
                     snap_service,
                     keyboard_service,
                     config_store,
+                    monitor_provider,
                     state,
                 ) {
                     eprintln!("입력 리스너 오류: {e}");
@@ -149,6 +156,7 @@ fn run_message_loop(
     snap_service: Arc<SnapService>,
     keyboard_service: Arc<KeyboardService>,
     config_store: Arc<dyn ConfigStore>,
+    monitor_provider: Arc<Win32MonitorProvider>,
     state: Arc<Mutex<InputState>>,
 ) -> windows::core::Result<()> {
     // message-only 창 생성.
@@ -174,12 +182,17 @@ fn run_message_loop(
                 unregister_hotkeys(&hwnd);
                 return Ok(());
             }
+            // WM_DISPLAYCHANGE — 모니터 연결/해제/DPI 변경. MonitorProvider 캐시를
+            // 무효화하여 다음 snap 이 최신 모니터 정보를 사용하도록 한다.
+            // 캐시만 갱신하고 메시지 처리는 계속 진행 (DefWindowProcW 로도 전달됨).
+            if msg.message == WM_DISPLAYCHANGE {
+                monitor_provider.invalidate();
+            }
             // WM_HOTKEY 처리 — 방향키 snap.
             if msg.message == WM_HOTKEY {
                 handle_hotkey(msg.wParam.0 as i32, &keyboard_service);
             }
-            // WM_DISPLAYCHANGE (0x7E) 등은 DefWindowProcW 로 전달 (Task 4 에서 처리).
-            // WM_DESTROY 도 기본 처리만 (DefWindowProcW 가 PostQuitMessage 호출 안 함).
+            // WM_DESTROY 등은 기본 처리만 (DefWindowProcW 가 PostQuitMessage 호출 안 함).
             // SAFETY: msg 는 방금 PeekMessageW 로 채운 유효 메시지.
             unsafe {
                 let _ = TranslateMessage(&msg);
@@ -238,8 +251,8 @@ fn create_message_window() -> windows::core::Result<HWND> {
 
 /// message-only 창의 window proc — 모든 메시지를 DefWindowProcW 로 위임.
 ///
-/// 실제 입력 처리(WM_HOTKEY)는 GetMessage 루프에서 직접 수행한다.
-/// WM_DISPLAYCHANGE 등은 Task 4 에서 이곳 또는 루프에서 처리한다.
+/// 실제 입력 처리(WM_HOTKEY) 및 WM_DISPLAYCHANGE 캐시 무효화는
+/// PeekMessageW 루프에서 직접 수행한다.
 unsafe extern "system" fn input_wndproc(
     hwnd: HWND,
     msg: u32,
