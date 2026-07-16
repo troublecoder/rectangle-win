@@ -7,7 +7,7 @@
 use tauri::State;
 
 use crate::application::errors::ApplicationError;
-use crate::application::ports::ConfigStore;
+use crate::application::ports::{ConfigStore, MonitorProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::model::Config;
 use crate::domain::presets::SnapPreset;

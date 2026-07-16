@@ -38,10 +38,20 @@ pub fn run() {
                 });
             }
 
-            // Win32 입력/오버레이 어댑터는 이후 태스크(Task 2/3+)에서
-            // RegisterHotKey + DirectComposition 기반으로 다시 연결된다.
-            // 현재 기준선에서는 SnapService / KeyboardService 가 AppState 에
-            // 보관되지만 입력 리스너가 없으므로 snap 액션은 트리거되지 않는다.
+            // Win32 입력 리스너 시작 — RegisterHotKey(키보드 snap) +
+            // GetAsyncKeyState 폴링(마우스 throw) + WM_DISPLAYCHANGE 모니터 감지.
+            // AppState 의 구체 Win32MonitorProvider 인스턴스를 전달하여
+            // 디스플레이 변경 시 invalidate() 가 snap 경로 캐시에 닿도록 한다.
+            #[cfg(windows)]
+            {
+                let state = app.state::<presentation::state::AppState>();
+                crate::infrastructure::win32_input::Win32InputListener::start(
+                    state.snap_service.clone(),
+                    state.keyboard_service.clone(),
+                    state.config_store.clone(),
+                    state.monitor_provider.clone(),
+                );
+            }
 
             #[cfg(debug_assertions)]
             {
