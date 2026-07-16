@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use crate::application::keyboard_service::KeyboardService;
-use crate::application::ports::{MonitorProvider, WindowMover};
+use crate::application::ports::{MonitorProvider, OverlayController, WindowMover};
 use crate::application::snap_service::SnapService;
 use crate::infrastructure::overlay_window::TauriOverlay;
 use crate::infrastructure::toml_config::TomlConfigStore;
@@ -19,15 +19,17 @@ use crate::infrastructure::toml_config::TomlConfigStore;
 /// 애플리케이션 전역 공유 상태.
 ///
 /// 모든 필드는 불변이며, 가변 상태는 각 서비스/어댑터 내부의 Mutex 로 보호된다.
-/// `TauriOverlay` 와 `TomlConfigStore` 는 명령에서 직접 접근할 수 있도록
-/// 구체적 타입으로 보관한다(나머지는 trait object).
+/// `TomlConfigStore` 만 명령에서 경로 조회를 위해 구체적 타입으로 보관하고,
+/// 나머지 어댑터는 trait object (`Arc<dyn ...>`) 로 보관한다.
+/// `snap_service` / `keyboard_service` 는 입력 어댑터와 공유하기 위해
+/// `Arc` 로 감싸 보관한다 (현재 기준선에서는 입력 리스너가 없음).
 pub struct AppState {
     pub config_store: Arc<TomlConfigStore>,
     pub window_mover: Arc<dyn WindowMover>,
     pub monitor_provider: Arc<dyn MonitorProvider>,
-    pub overlay: Arc<TauriOverlay>,
-    pub snap_service: SnapService,
-    pub keyboard_service: KeyboardService,
+    pub overlay: Arc<dyn OverlayController>,
+    pub snap_service: Arc<SnapService>,
+    pub keyboard_service: Arc<KeyboardService>,
 }
 
 impl AppState {
@@ -49,19 +51,22 @@ impl AppState {
         let monitor_provider: Arc<dyn MonitorProvider> =
             Arc::new(crate::application::mock::MockMonitorProvider::default());
 
-        let overlay = Arc::new(TauriOverlay::new());
+        // 임시: 기존 TauriOverlay 를 trait object 로 보관.
+        // set_emitter 가 없으므로 오버레이 표시는 동작하지 않지만 snap 로직은 정상 작동.
+        // Task 2 에서 Win32LayeredOverlay (DirectComposition) 로 교체 예정.
+        let overlay: Arc<dyn OverlayController> = Arc::new(TauriOverlay::new());
 
-        let snap_service = SnapService::new(
+        let snap_service = Arc::new(SnapService::new(
             window_mover.clone(),
             monitor_provider.clone(),
             overlay.clone(),
             config_store.clone(),
-        );
-        let keyboard_service = KeyboardService::new(
+        ));
+        let keyboard_service = Arc::new(KeyboardService::new(
             window_mover.clone(),
             monitor_provider.clone(),
             config_store.clone(),
-        );
+        ));
 
         Self {
             config_store,

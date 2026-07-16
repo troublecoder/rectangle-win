@@ -8,6 +8,8 @@
 //! Win32 전용 모듈 (Windows 타겟에서만 컴파일):
 //! - [`win32_window`] — `WindowMover` 의 user32 구현체
 //! - [`win32_monitor`] — `MonitorProvider` 의 gdi32/user32 구현체
+//! - [`win32_overlay`] — DirectComposition 기반 레이어드 오버레이 (Task 2에서 구현)
+//! - [`win32_input`] — RegisterHotKey 기반 입력 어댑터 (Task 3+에서 구현)
 
 pub mod toml_config;
 pub mod overlay_window;
@@ -18,3 +20,9 @@ pub mod win32_window;
 
 #[cfg(windows)]
 pub mod win32_monitor;
+
+#[cfg(windows)]
+pub mod win32_overlay;
+
+#[cfg(windows)]
+pub mod win32_input;

@@ -97,8 +97,8 @@ impl SnapService {
     /// Idle 상태에서는 무시한다(FSM의 idle 핸들러와 동일).
     pub fn on_mouse_moved(
         &self,
-        _cursor_x: i32,
-        _cursor_y: i32,
+        cursor_x: i32,
+        cursor_y: i32,
         delta_x: f64,
         delta_y: f64,
     ) -> AppResult<()> {
@@ -139,6 +139,12 @@ impl SnapService {
         };
         if let Some(sector) = sector_to_highlight {
             self.overlay.highlight_sector(sector)?;
+            // snap 미리보기 — 해당 sector 에 매핑된 SnapTarget 의 픽셀 영역을 표시.
+            if let Ok(preview) = self.compute_snap_preview(sector, cursor_x, cursor_y) {
+                if let Some((x, y, w, h)) = preview {
+                    self.overlay.show_snap_preview(x, y, w, h)?;
+                }
+            }
         }
         Ok(())
     }
@@ -218,6 +224,38 @@ impl SnapService {
     }
 
     /// 현재 섹터(테스트/디버그용).
+
+    /// 주어진 sector 에 매핑된 SnapTarget 의 픽셀 영역을 계산 (미리보기용).
+    /// Area 타입만 미리보기 가능 — Action 타입은 None 반환.
+    fn compute_snap_preview(&self, sector: u8, cursor_x: i32, cursor_y: i32) -> AppResult<Option<(i32, i32, i32, i32)>> {
+        let config = self.config_store.load()?;
+        let mapping = &config.throw.mapping;
+        let target_id = match mapping.get(&sector) {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let target = config
+            .snap
+            .areas
+            .iter()
+            .find(|t| t.id() == target_id.as_str());
+        let target = match target {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        // Area 타입만 좌표 계산 가능.
+        if let crate::domain::model::SnapTarget::Area { x_ratio, y_ratio, w_ratio, h_ratio, .. } =
+            target
+        {
+            let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
+            let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, &monitor);
+            Ok(Some((rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 현재 섹터(테스트/디버그용).
     #[cfg(test)]
     pub(crate) fn current_sector(&self) -> Option<u8> {
         self.inner.lock().fsm.current_sector
@@ -263,10 +301,10 @@ mod tests {
         let config_store = Arc::new(MockConfigStore::default());
 
         // 기본 매핑: 0 -> right-half, 4 -> left-half
-        let mut mapping = HashMap::new();
+        let mut mapping = crate::domain::model::SectorMap::new();
         mapping.insert(0u8, "right-half".to_string());
         mapping.insert(4u8, "left-half".to_string());
-        let mut long_mapping = HashMap::new();
+        let mut long_mapping = crate::domain::model::SectorMap::new();
         long_mapping.insert(0u8, "maximize".to_string());
 
         {

@@ -12,9 +12,10 @@
 #![cfg(windows)]
 
 use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowRect, MoveWindow, SetWindowPos, ShowWindow, HWND_TOP,
-    SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    GetForegroundWindow, GetWindowThreadProcessId, GetWindowRect, MoveWindow, SetWindowPos,
+    ShowWindow, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOZORDER, SWP_SHOWWINDOW,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -24,7 +25,7 @@ use crate::domain::model::{SnapTarget, WindowAction};
 
 /// Win32 user32 API 위에 구현한 [`WindowMover`].
 ///
-/// 상태를 갖지 않는 얇은 어댑터 — 모든 호출이 즉시 Win32 로 전달된다.
+/// 상태을 갖지 않는 얇은 어댑터 — 모든 호출이 즉시 Win32 로 전달된다.
 /// 단위 테스트는 실제 창 조작이 필요하므로 작성하지 않는다.
 pub struct Win32WindowMover;
 
@@ -37,6 +38,19 @@ impl Win32WindowMover {
 impl Default for Win32WindowMover {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 창 핸들이 우리 프로세스에 속하는지(즉, Rectangle Win 자체 창인지) 검사.
+///
+/// throw modifier 활성화 중 오버레이/설정창이 foreground 가 될 수 있으므로,
+/// snap 대상에서 우리 앱 창을 제외하기 위해 사용한다.
+fn is_own_window(hwnd: HWND) -> bool {
+    // SAFETY: GetCurrentProcessId / GetWindowThreadProcessId 는 읽기 전용 조회.
+    unsafe {
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+        pid == GetCurrentProcessId()
     }
 }
 
@@ -53,10 +67,13 @@ impl WindowMover for Win32WindowMover {
         // SAFETY: GetForegroundWindow 는 인자 없이 단순히 현재 전경창을 반환하는 안전한 API.
         let hwnd = unsafe { GetForegroundWindow() };
         if hwnd.is_invalid() {
-            None
-        } else {
-            Some(hwnd.0 as usize as u64)
+            return None;
         }
+        // 우리 앱 창(설정/오버레이)은 snap 대상에서 제외.
+        if is_own_window(hwnd) {
+            return None;
+        }
+        Some(hwnd.0 as usize as u64)
     }
 
     fn apply_snap_target(
@@ -81,8 +98,9 @@ impl WindowMover for Win32WindowMover {
                 let w = rect.size.width;
                 let h = rect.size.height;
                 // SAFETY: hwnd 는 호출자가 전달한 유효(로 가정된) 창 핸들.
-                // SWP_NOZORDER 로 z-order 보존, SWP_SHOWWINDOW 로 창이 숨겨져 있으면 표시.
+                // 최대화된 창은 SetWindowPos 가 무시되므로 먼저 복원.
                 unsafe {
+                    ShowWindow(hwnd, SW_RESTORE);
                     SetWindowPos(
                         hwnd,
                         HWND_TOP,

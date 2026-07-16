@@ -184,8 +184,58 @@ impl Default for ThrowConfig {
     }
 }
 
-/// 섹터 인덱스 → SnapTarget id 참조
-pub type SectorMap = std::collections::HashMap<u8, String>;
+/// 섹터 인덱스 → SnapTarget id 참조.
+///
+/// 내부적으로는 `HashMap<u8, String>` 이지만, TOML 직렬화 시 u8 key 를
+/// 지원하지 않으므로 serde 에서는 문자열 key (`"0"`, `"1"`, …) 로 변환한다.
+/// JSON(Tauri IPC)에서도 동일하게 문자열 key 로 직렬화된다 — 프론트엔드
+/// Zod `z.record(z.string(), z.string())` 와 일치.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SectorMap(pub std::collections::HashMap<u8, String>);
+
+impl SectorMap {
+    pub fn new() -> Self {
+        Self(std::collections::HashMap::new())
+    }
+    pub fn get(&self, key: &u8) -> Option<&String> {
+        self.0.get(key)
+    }
+    pub fn insert(&mut self, key: u8, value: String) {
+        self.0.insert(key, value);
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&u8, &String)> {
+        self.0.iter()
+    }
+}
+
+impl Serialize for SectorMap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use std::collections::BTreeMap;
+        // u8 key 를 문자열로 변환하여 정렬된 맵으로 직렬화 (TOML/JSON 호환).
+        let map: BTreeMap<String, &String> = self
+            .0
+            .iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        map.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SectorMap {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use std::collections::BTreeMap;
+        let map: BTreeMap<String, String> = BTreeMap::deserialize(deserializer)?;
+        let mut inner = std::collections::HashMap::new();
+        for (k, v) in map {
+            let idx: u8 = k.parse().map_err(serde::de::Error::custom)?;
+            inner.insert(idx, v);
+        }
+        Ok(SectorMap(inner))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardConfig {

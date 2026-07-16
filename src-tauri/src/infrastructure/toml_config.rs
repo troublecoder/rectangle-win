@@ -46,16 +46,51 @@ impl TomlConfigStore {
 
     fn read_from_disk(&self) -> AppResult<Config> {
         if !self.path.exists() {
-            let default = Config::default();
+            let default = Self::config_with_defaults();
             self.write_to_disk(&default)?;
             return Ok(default);
         }
         let contents = std::fs::read_to_string(&self.path).map_err(|e| {
             ApplicationError::WindowOperation(format!("failed to read config: {}", e))
         })?;
-        toml::from_str(&contents).map_err(|e| {
+        let mut config: Config = toml::from_str(&contents).map_err(|e| {
             ApplicationError::WindowOperation(format!("failed to parse config: {}", e))
-        })
+        })?;
+
+        // snap 영역이 비어 있으면(이전 버전 config 등) 활성 프리셋으로 채운다.
+        if config.snap.areas.is_empty() {
+            config = Self::config_with_defaults();
+            self.write_to_disk(&config)?;
+        }
+        Ok(config)
+    }
+
+    /// 기본 Config 에 standard 프리셋 + 8섹터 throw 매핑을 적용해 반환.
+    fn config_with_defaults() -> Config {
+        use crate::domain::model::SectorMap;
+        use crate::domain::presets::SnapPreset;
+
+        let mut config = Config::default();
+        let preset = SnapPreset::from_str(&config.snap.active_preset)
+            .unwrap_or(SnapPreset::Standard);
+        config.snap.areas = preset.targets();
+
+        // 8섹터 throw 매핑 — 시계방향, 0번=오른쪽(E).
+        // 섹터 번호는 domain::model::Sector 주석 기준:
+        //   0=오른쪽, 1=오른쪽아래, 2=아래, 3=왼쪽아래,
+        //   4=왼쪽, 5=왼쪽위, 6=위, 7=오른쪽위
+        let mut mapping = SectorMap::new();
+        mapping.insert(0, "right-half".to_string());      // → 우 — 우측절반
+        mapping.insert(1, "quarter-br".to_string());      // ↘ 우하 — 우하분기
+        mapping.insert(2, "bottom-half".to_string());     // ↓ 아래 — 하단절반
+        mapping.insert(3, "quarter-bl".to_string());      // ↙ 좌하 — 좌하분기
+        mapping.insert(4, "left-half".to_string());       // ← 좌 — 좌측절반
+        mapping.insert(5, "quarter-tl".to_string());      // ↖ 좌상 — 좌상분기
+        mapping.insert(6, "maximize".to_string());        // ↑ 위 — 최대화
+        mapping.insert(7, "quarter-tr".to_string());      // ↗ 우상 — 우상분기
+        config.throw.mapping = mapping;
+
+        config
     }
 
     fn write_to_disk(&self, config: &Config) -> AppResult<()> {

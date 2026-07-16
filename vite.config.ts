@@ -29,6 +29,11 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
+    watch: {
+      // Cargo 빌드 산출물(target/)을 Vite가 감시하면 Windows에서
+      // 링커가 lock 중인 .exe 파일을 watch 시도해 EBUSY 크래시가 발생한다.
+      ignored: ['**/target/**', '**/src-tauri/target/**', '**/dist/**'],
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
