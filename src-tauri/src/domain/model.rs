@@ -137,6 +137,8 @@ pub struct GeneralConfig {
     pub language: String,
     /// Windows 기본 Win+방향키 Snap 동작을 우리 snap으로 오버라이드할지 여부.
     pub override_win_snap: bool,
+    /// Snap 영역의 여백(픽셀). 창 이동 및 미리보기에 동일하게 적용. 기본값 0.
+    pub snap_margin: u32,
 }
 
 impl Default for GeneralConfig {
@@ -147,6 +149,7 @@ impl Default for GeneralConfig {
             show_in_tray: true,
             language: "ko".to_string(),
             override_win_snap: false,
+            snap_margin: 0,
         }
     }
 }

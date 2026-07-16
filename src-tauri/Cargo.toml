@@ -53,6 +53,7 @@ windows = { version = "0.58", features = [
     # WS_EX_LAYERED + UpdateLayeredWindow + Direct2D DC render target 사용.
     # DXGI_FORMAT_B8G8R8A8_UNORM (D2D 픽셀 포맷) 만 필요 → Dxgi_Common 유지.
     "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Dwm",
 ] }
 
 [dev-dependencies]

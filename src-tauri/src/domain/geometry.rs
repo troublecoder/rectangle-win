@@ -55,7 +55,10 @@ pub fn compute_sector(delta: Vector2D<f64, Pixel>, sector_count: u8) -> u8 {
     index % sector_count
 }
 
-/// SnapTarget의 비율 좌표를 모니터의 픽셀 Rect로 변환
+/// SnapTarget의 비율 좌표를 모니터의 픽셀 Rect로 변환.
+///
+/// `round()` 를 사용하여 반올림 — `as i32`(버림)는 0.333*1920=639.36→639 처럼
+/// 누적 손실이 발생하여 snap 영역에 의도치 않은 마진이 생긴다.
 pub fn ratio_to_pixels(
     x_ratio: f64,
     y_ratio: f64,
@@ -65,12 +68,12 @@ pub fn ratio_to_pixels(
 ) -> Rect<i32, Pixel> {
     Rect::new(
         Point2D::new(
-            monitor.origin.x + (x_ratio * monitor.width() as f64) as i32,
-            monitor.origin.y + (y_ratio * monitor.height() as f64) as i32,
+            monitor.origin.x + (x_ratio * monitor.width() as f64).round() as i32,
+            monitor.origin.y + (y_ratio * monitor.height() as f64).round() as i32,
         ),
         Size2D::new(
-            (w_ratio * monitor.width() as f64) as i32,
-            (h_ratio * monitor.height() as f64) as i32,
+            (w_ratio * monitor.width() as f64).round() as i32,
+            (h_ratio * monitor.height() as f64).round() as i32,
         ),
     )
 }

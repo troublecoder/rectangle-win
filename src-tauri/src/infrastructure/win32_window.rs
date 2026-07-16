@@ -12,10 +12,12 @@
 #![cfg(windows)]
 
 use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowThreadProcessId, GetWindowRect, MoveWindow, SetWindowPos,
-    ShowWindow, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    ShowWindow, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOZORDER,
+    SWP_SHOWWINDOW,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -54,7 +56,25 @@ fn is_own_window(hwnd: HWND) -> bool {
     }
 }
 
-/// `u64` 창 핸들 → Win32 `HWND` 로 변환.
+/// DWM 그림자를 제외한 실제 창 영역 가져오기.
+///
+/// `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 는 DWM 이 그리는
+/// 보이지 않는 그림자/테두리를 제외한 실제 창 사각형을 반환한다.
+/// `GetWindowRect` 는 그림자를 포함하여 오버레이가 실제 창보다 크게 표시된다.
+fn dwm_window_rect(hwnd: HWND) -> AppResult<RECT> {
+    let mut rect = RECT::default();
+    // SAFETY: hwnd 는 유효한 창 핸들. rect 는 로컬 스택 버퍼.
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        )
+    }
+    .map_err(|e| ApplicationError::WindowOperation(format!("DwmGetWindowAttribute: {e}")))?;
+    Ok(rect)
+}
 ///
 /// `HWND` 는 windows-rs 0.58 에서 `HWND(*mut c_void)` 이며,
 /// 포인터 크기는 플랫폼에 따라 64비트이므로 `u64 → usize → *mut _` 경로로 안전하게 변환한다.
@@ -93,12 +113,17 @@ impl WindowMover for Win32WindowMover {
                 ..
             } => {
                 let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, monitor);
+                // SetWindowPos 는 전체 창(테두리 포함) 영역을 지정.
+                // DPI-aware(per-monitor v2) 창에서는 DWM 이 테두리를 자동 처리하므로
+                // 추가 보정 없이 snap 영역 좌표를 그대로 사용하면 된다.
                 let x = rect.origin.x;
                 let y = rect.origin.y;
                 let w = rect.size.width;
                 let h = rect.size.height;
                 // SAFETY: hwnd 는 호출자가 전달한 유효(로 가정된) 창 핸들.
                 // 최대화된 창은 SetWindowPos 가 무시되므로 먼저 복원.
+                // SWP_FRAMECHANGED 로 프레임 재계산 — DWM 테두리/그림자로 인한
+                // 공간 남김 현상 완화.
                 unsafe {
                     ShowWindow(hwnd, SW_RESTORE);
                     SetWindowPos(
@@ -108,7 +133,7 @@ impl WindowMover for Win32WindowMover {
                         y,
                         w,
                         h,
-                        SWP_NOZORDER | SWP_SHOWWINDOW,
+                        SWP_NOZORDER | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
                     )
                 }
                 .map_err(|e| ApplicationError::WindowOperation(e.to_string()))?;
@@ -120,11 +145,16 @@ impl WindowMover for Win32WindowMover {
 
     fn get_window_rect(&self, window_handle: u64) -> AppResult<MonitorBounds> {
         let hwnd = hwnd_from_u64(window_handle);
-        let mut rect = RECT::default();
-        // SAFETY: hwnd 는 호출자가 전달한 유효(로 가정된) 창 핸들.
-        // 출력 버퍼 rect 는 로컬 스택 변수로 충분히 초기화되어 있다.
-        unsafe { GetWindowRect(hwnd, &mut rect) }
-            .map_err(|e| ApplicationError::WindowOperation(e.to_string()))?;
+        // DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS) 로 DWM 그림자를
+        // 제외한 실제 창 영역을 가져온다. GetWindowRect 는 그림자를 포함하여
+        // 오버레이가 실제 창보다 크게 표시되는 문제가 있다.
+        // DWM API 실패 시 GetWindowRect 로 폴백.
+        let rect: RECT = dwm_window_rect(hwnd).unwrap_or_else(|_| {
+            let mut r = RECT::default();
+            // SAFETY: hwnd 는 유효(로 가정된) 창 핸들.
+            let _ = unsafe { GetWindowRect(hwnd, &mut r) };
+            r
+        });
         Ok(MonitorBounds::new(
             rect.left,
             rect.top,

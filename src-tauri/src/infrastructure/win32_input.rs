@@ -27,10 +27,9 @@ use std::time::Duration;
 use windows::core::w;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, INPUT_KEYBOARD, RegisterHotKey, SendInput, UnregisterHotKey,
-    HOT_KEY_MODIFIERS, KEYBDINPUT, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
-    VK_CONTROL, VK_DOWN, VK_LEFT, VK_LMENU, VK_LWIN, VK_MENU, VK_RIGHT, VK_RWIN, VK_SHIFT,
-    VK_UP, KEYEVENTF_KEYUP, INPUT, VIRTUAL_KEY,
+    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL,
+    MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_CONTROL, VK_DOWN, VK_LEFT, VK_LWIN, VK_MENU, VK_RIGHT,
+    VK_RWIN, VK_SHIFT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, MsgWaitForMultipleObjects,
@@ -408,10 +407,6 @@ fn poll_throw(
         if let Err(e) = snap_service.on_modifier_released(false, cx, cy) {
             eprintln!("throw on_modifier_released 오류: {e}");
         }
-        // Win+Alt 해제 후 Alt 키 잔류 상태 해소 — 가짜 key-up 이벤트 전송.
-        // Win+Alt 를 뗄 때 Alt 가 먼저 떨어지면 윈도우가 메뉴 활성화를 시도하면서
-        // Alt 상태가 시스템 전역에 잔류하는 문제를 방지한다.
-        release_modifier_keys();
     }
 }
 
@@ -440,40 +435,4 @@ fn check_modifiers(mods: &[String]) -> bool {
         }
     }
     true
-}
-
-/// Win+Alt throw 해제 후 modifier 잔류 상태 해소.
-///
-/// Win+Alt 를 뗄 때 Alt 가 먼저 떨어지면 윈도우가 메뉴 활성화를 시도하면서
-/// Alt 상태가 시스템 전역에 잔류한다. 이를 방지하기 위해 가짜 key-up 이벤트를
-/// SendInput 으로 전송하여 modifier 상태를 강제 해제한다.
-fn release_modifier_keys() {
-    // SAFETY: SendInput 은 단순 입력 주입. 배열은 스택에 있고 길이는 정확.
-    let inputs = [
-        make_keyup_input(VK_LWIN.0 as u16),
-        make_keyup_input(VK_RWIN.0 as u16),
-        make_keyup_input(VK_LMENU.0 as u16),
-    ];
-    let _ = unsafe {
-        SendInput(
-            &inputs,
-            std::mem::size_of::<INPUT>() as i32,
-        )
-    };
-}
-
-/// VK 코드에 대한 key-up INPUT 구조체 생성.
-fn make_keyup_input(vk: u16) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(vk),
-                wScan: 0,
-                dwFlags: KEYEVENTF_KEYUP,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
 }
