@@ -31,9 +31,10 @@ const tabItems = computed(() => [
   { label: t('snapEditor.tabs.sectorMapping'), slot: 'mapping', icon: 'i-lucide-pie-chart' },
 ])
 
-const areas = computed(() =>
-  store.draft?.snap.areas.filter((a): a is Extract<SnapTarget, { kind: 'area' }> => a.kind === 'area') ?? [],
-)
+const selectedArea = computed(() => {
+  const t = store.draft?.snap.areas.find(a => a.id === selectedId.value) ?? null
+  return t && t.kind === 'area' ? t : null
+})
 
 const selectedTarget = computed(() =>
   store.draft?.snap.areas.find(a => a.id === selectedId.value) ?? null,
@@ -152,11 +153,10 @@ async function applyPreset(presetName: string) {
               </div>
             </div>
 
-            <!-- 중앙: vue-konva 캔버스 -->
+            <!-- 중앙: vue-konva 캔버스 (선택된 영역만 표시) -->
             <SnapCanvas
-              :areas="areas"
+              :area="selectedArea"
               :selected-id="selectedId"
-              @select="selectTarget"
               @update="(id, patch) => updateTarget(id, patch)"
             />
 
