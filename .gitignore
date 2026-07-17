@@ -11,3 +11,6 @@ dist/
 # Nuxt UI auto-generated type declarations (regenerated on dev/build)
 auto-imports.d.ts
 components.d.ts
+
+# Tauri updater signing private key — 절대 커밋 금지. 공개 키(.pub)만 커밋 대상.
+.tauri/rectangle-win-updater.key

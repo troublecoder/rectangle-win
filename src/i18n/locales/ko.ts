@@ -40,22 +40,12 @@ export default {
   },
   keyboard: {
     title: '키보드 스냅',
-    description: '방향키 체인 설정',
+    description: '방향키 스냅 설정',
     enabled: '키보드 스냅 활성화',
-    modifierMode: '수정자 모드',
-    modifierSeparate: '분리',
-    modifierSeparateDesc: '스로우와 다른 수정자 사용',
-    modifierShared: '공유',
-    modifierSharedDesc: '스로우와 수정자 공유',
-    modifierOverrideOs: 'Windows 스냅 오버라이드',
-    modifierOverrideOsDesc: 'Win+방향키를 가로채어 OS 동작 교체',
-    overrideWarning: 'Windows 기본 스냅(Win+방향키)이 교체됩니다. 다른 Win 조합은 정상 작동합니다.',
     triggerModifiers: '트리거 수정자',
+    sharedModifiersNote: '키보드 스냅은 스로우 트리거 수정자(Win+Alt)를 공유합니다. 방향키로 포커스된 창을 스냅합니다.',
     cycleTimeout: '체인 타임아웃',
     cycleTimeoutDesc: '이 시간(ms) 후 체인 초기화',
-    chains: '체인',
-    horizontalChain: '수평 체인 (← / →)',
-    verticalChain: '수직 체인 (↑ / ↓)',
   },
   display: {
     title: '디스플레이',
@@ -95,7 +85,6 @@ export default {
     tabs: {
       areas: '스냅 영역',
       sectorMapping: '섹터 매핑',
-      chains: '키보드 체인',
     },
   },
   about: {

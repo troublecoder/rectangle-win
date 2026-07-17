@@ -7,7 +7,7 @@
 use tauri::State;
 
 use crate::application::errors::ApplicationError;
-use crate::application::ports::ConfigStore;
+use crate::application::ports::{ConfigStore, MonitorProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::model::Config;
 use crate::domain::presets::SnapPreset;
@@ -55,6 +55,8 @@ pub fn get_config(state: State<'_, AppState>) -> CmdResult<Config> {
 #[tauri::command]
 pub fn save_config(state: State<'_, AppState>, config: Config) -> CmdResult<()> {
     state.config_store.save(&config)?;
+    #[cfg(windows)]
+    crate::infrastructure::win32_input::Win32InputListener::update_config(&config);
     Ok(())
 }
 

@@ -12,9 +12,6 @@ import * as api from './api'
 import type { Config } from '@/entities/config'
 import { defaultConfig } from '@/entities/default-config'
 
-/** Tauri IPC가 없는 순수 브라우저 환경 감지 */
-const isBrowserOnly = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)
-
 export const useConfigStore = defineStore('config', () => {
   // 백엔드에 저장된 최신 설정
   const saved = ref<Config | null>(null)
@@ -33,15 +30,9 @@ export const useConfigStore = defineStore('config', () => {
     loading.value = true
     error.value = null
     try {
-      if (isBrowserOnly) {
-        // 개발 환경: Tauri 없이 mock 데이터 사용
-        saved.value = structuredClone(defaultConfig)
-        draft.value = structuredClone(defaultConfig)
-      } else {
-        const config = await api.getConfig()
-        saved.value = config
-        draft.value = structuredClone(config)
-      }
+      const config = await api.getConfig()
+      saved.value = config
+      draft.value = JSON.parse(JSON.stringify(config))
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -54,10 +45,10 @@ export const useConfigStore = defineStore('config', () => {
     saving.value = true
     error.value = null
     try {
-      if (!isBrowserOnly) {
-        await api.saveConfig(draft.value)
-      }
-      saved.value = structuredClone(draft.value)
+      // isBrowserOnly 체크 제거 — 항상 invoke 시도, 실패 시 catch.
+      // Tauri 웹뷰에서 __TAURI_INTERNALS__ 체크가 신뢰할 수 없는 문제 해결.
+      await api.saveConfig(draft.value)
+      saved.value = JSON.parse(JSON.stringify(draft.value))
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -67,7 +58,7 @@ export const useConfigStore = defineStore('config', () => {
 
   function reset() {
     if (saved.value) {
-      draft.value = structuredClone(saved.value)
+      draft.value = JSON.parse(JSON.stringify(saved.value))
     }
   }
 

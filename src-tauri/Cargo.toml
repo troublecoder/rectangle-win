@@ -16,6 +16,7 @@ parking_lot = "0.12"
 
 # 직렬화 & 에러
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 thiserror = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -31,6 +32,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 
 # 로깅 / 비동기 런타임
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["full"] }
@@ -40,9 +42,20 @@ tokio = { version = "1", features = ["full"] }
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Foundation_Numerics",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_System_Threading",
     "Win32_Graphics_Gdi",
-]}
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    # Direct3D11/DXGI/DirectComposition/Direct3D 오버레이 파이프라인 제거:
+    # WS_EX_LAYERED + UpdateLayeredWindow + Direct2D DC render target 사용.
+    # DXGI_FORMAT_B8G8R8A8_UNORM (D2D 픽셀 포맷) 만 필요 → Dxgi_Common 유지.
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Dwm",
+] }
 
 [dev-dependencies]
 tempfile = "3"

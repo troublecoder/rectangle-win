@@ -33,6 +33,19 @@ impl MockWindowMover {
     pub fn snap_calls(&self) -> Vec<MockWindowCall> {
         self.calls.lock().unwrap().clone()
     }
+
+    /// ApplySnap 호출만 필터링 (GetRect 등 다른 호출 제외).
+    /// on_modifier_pressed 가 lock-on 표시를 위해 get_window_rect 를 호출하므로,
+    /// snap 실행 여부를 검증할 때는 이 메서드를 사용해야 한다.
+    pub fn apply_snap_calls(&self) -> Vec<MockWindowCall> {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| matches!(c, MockWindowCall::ApplySnap { .. }))
+            .cloned()
+            .collect()
+    }
 }
 
 impl WindowMover for MockWindowMover {
@@ -116,11 +129,18 @@ pub struct MockOverlayController {
     pub visible: Mutex<bool>,
     pub last_cursor: Mutex<Option<(i32, i32)>>,
     pub last_sector: Mutex<Option<u8>>,
+    /// 마지막으로 show_snap_preview 에 전달된 사각형.
+    pub last_snap_preview: Mutex<Option<(i32, i32, i32, i32)>>,
 }
 
 impl OverlayController for MockOverlayController {
     fn show_reticle(&self, _cx: i32, _cy: i32, _count: u8) -> AppResult<()> {
-        *self.visible.lock().unwrap() = true;
+        let mut s = self.visible.lock().unwrap();
+        *s = true;
+        drop(s);
+        // Win32LayeredOverlay 와 동일: show_reticle 은 active_sector/snap_preview 클리어.
+        *self.last_sector.lock().unwrap() = None;
+        *self.last_snap_preview.lock().unwrap() = None;
         Ok(())
     }
 
@@ -134,7 +154,8 @@ impl OverlayController for MockOverlayController {
         Ok(())
     }
 
-    fn show_snap_preview(&self, _x: i32, _y: i32, _w: i32, _h: i32) -> AppResult<()> {
+    fn show_snap_preview(&self, x: i32, y: i32, w: i32, h: i32) -> AppResult<()> {
+        *self.last_snap_preview.lock().unwrap() = Some((x, y, w, h));
         Ok(())
     }
 

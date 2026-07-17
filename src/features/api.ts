@@ -25,7 +25,10 @@ export async function getConfig(): Promise<Config> {
 }
 
 export async function saveConfig(config: Config): Promise<void> {
-  await invoke('save_config', { config })
+  // Vue reactive 객체를 plain object로 변환 — invoke가 structuredClone을
+  // 사용하기 때문에 reactive proxy는 복제할 수 없다.
+  const plain = JSON.parse(JSON.stringify(config))
+  await invoke('save_config', { config: plain })
 }
 
 export async function getConfigPath(): Promise<string> {

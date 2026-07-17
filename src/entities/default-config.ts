@@ -10,9 +10,10 @@ export const defaultConfig: Config = {
     start_minimized: true,
     show_in_tray: true,
     language: 'ko',
+    snap_margin: 0,
   },
   snap: {
-    active_preset: 'standard',
+    active_preset: 'full',
     areas: [
       { kind: 'area', id: 'left-half', name: 'Left Half', x_ratio: 0, y_ratio: 0, w_ratio: 0.5, h_ratio: 1 },
       { kind: 'area', id: 'right-half', name: 'Right Half', x_ratio: 0.5, y_ratio: 0, w_ratio: 0.5, h_ratio: 1 },
@@ -36,13 +37,7 @@ export const defaultConfig: Config = {
   },
   keyboard: {
     enabled: true,
-    trigger_modifiers: ['Ctrl', 'Alt'],
-    modifier_mode: 'Separate',
     cycle_timeout_ms: 1500,
-    chains: {
-      horizontal: ['left-half', 'third-left', 'center', 'third-right', 'right-half'],
-      vertical: ['maximize', 'almost-maximize', 'center', 'maximize-height'],
-    },
   },
   overlay: {
     reticle_style: 'pie',

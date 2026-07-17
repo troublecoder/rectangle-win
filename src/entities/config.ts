@@ -45,20 +45,9 @@ export type SnapTarget = z.infer<typeof snapTargetSchema>
 export type SnapTargetArea = z.infer<typeof snapTargetAreaSchema>
 export type SnapTargetAction = z.infer<typeof snapTargetActionSchema>
 
-// ─── ModifierMode ───────────────────────────────────────────────────
-export const modifierModeSchema = z.enum(['Shared', 'Separate', 'OverrideOs'])
-export type ModifierMode = z.infer<typeof modifierModeSchema>
-
 // ─── SectorMap (HashMap<u8, String> → Record) ───────────────────────
 export const sectorMapSchema = z.record(z.string(), z.string())
 export type SectorMap = z.infer<typeof sectorMapSchema>
-
-// ─── ChainConfig ────────────────────────────────────────────────────
-export const chainConfigSchema = z.object({
-  horizontal: z.array(z.string()),
-  vertical: z.array(z.string()),
-})
-export type ChainConfig = z.infer<typeof chainConfigSchema>
 
 // ─── Config 하위 스키마들 ───────────────────────────────────────────
 export const generalConfigSchema = z.object({
@@ -66,6 +55,7 @@ export const generalConfigSchema = z.object({
   start_minimized: z.boolean(),
   show_in_tray: z.boolean(),
   language: z.string(),
+  snap_margin: z.number(),
 })
 export type GeneralConfig = z.infer<typeof generalConfigSchema>
 
@@ -86,10 +76,7 @@ export type ThrowConfig = z.infer<typeof throwConfigSchema>
 
 export const keyboardConfigSchema = z.object({
   enabled: z.boolean(),
-  trigger_modifiers: z.array(z.string()),
-  modifier_mode: modifierModeSchema,
   cycle_timeout_ms: z.number().int(),
-  chains: chainConfigSchema,
 })
 export type KeyboardConfig = z.infer<typeof keyboardConfigSchema>
 

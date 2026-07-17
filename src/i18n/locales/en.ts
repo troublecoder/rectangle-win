@@ -40,22 +40,12 @@ export default {
   },
   keyboard: {
     title: 'Keyboard Snap',
-    description: 'Direction key chain settings',
+    description: 'Direction key snap settings',
     enabled: 'Enable keyboard snap',
-    modifierMode: 'Modifier Mode',
-    modifierSeparate: 'Separate',
-    modifierSeparateDesc: 'Use different modifier from throw',
-    modifierShared: 'Shared',
-    modifierSharedDesc: 'Share modifier with throw',
-    modifierOverrideOs: 'Override Windows Snap',
-    modifierOverrideOsDesc: 'Intercept Win+Arrow keys, replace OS behavior',
-    overrideWarning: 'Windows default Snap (Win+Arrow) will be replaced. Other Win combinations still work normally.',
     triggerModifiers: 'Trigger Modifiers',
+    sharedModifiersNote: 'Keyboard snap shares the throw trigger modifiers (Win+Alt). Direction keys snap the focused window.',
     cycleTimeout: 'Cycle Timeout',
     cycleTimeoutDesc: 'Reset chain after this many ms',
-    chains: 'Chains',
-    horizontalChain: 'Horizontal Chain (← / →)',
-    verticalChain: 'Vertical Chain (↑ / ↓)',
   },
   display: {
     title: 'Display',
@@ -95,7 +85,6 @@ export default {
     tabs: {
       areas: 'Snap Areas',
       sectorMapping: 'Sector Mapping',
-      chains: 'Keyboard Chains',
     },
   },
   about: {

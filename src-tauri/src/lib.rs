@@ -3,9 +3,20 @@ pub mod domain;
 pub mod infrastructure;
 pub mod presentation;
 
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Manager, WindowEvent};
 
 pub fn run() {
+    // Per-Monitor DPI-Aware V2 설정 — GetSystemMetrics/모니터 좌표가 물리 픽셀 기준으로
+    // 일관되게 동작. 125%/150% 스케일 환경에서 오버레이 창 크기와 snap 좌표가 맞지 않는
+    // 문제(DPI 스케일링 불일치)를 해결한다.
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::HiDpi::{
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+        };
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -27,25 +38,6 @@ pub fn run() {
             // 시스템 트레이 설정 (메뉴 + 아이콘).
             presentation::tray::setup_tray(app)?;
 
-            // 오버레이 emit 콜백 주입 — OverlayController 호출을 프론트엔드 이벤트로 변환.
-            let state = app.state::<presentation::state::AppState>();
-            let app_handle = app.handle().clone();
-            state.overlay.set_emitter(move |overlay_state| {
-                use presentation::events::OverlayEvent;
-                let event = if !overlay_state.visible {
-                    OverlayEvent::Hide
-                } else if let Some((cx, cy)) = overlay_state.center {
-                    OverlayEvent::Show {
-                        center_x: cx,
-                        center_y: cy,
-                        sector_count: overlay_state.sector_count,
-                    }
-                } else {
-                    OverlayEvent::Hide
-                };
-                let _ = app_handle.emit("overlay", event);
-            });
-
             // 메인 창 닫기 요청을 가로채어 트레이로 숨긴다 (종료 아님).
             if let Some(main_window) = app.get_webview_window("main") {
                 let win_clone = main_window.clone();
@@ -55,6 +47,21 @@ pub fn run() {
                         let _ = win_clone.hide();
                     }
                 });
+            }
+
+            // Win32 입력 리스너 시작 — RegisterHotKey(키보드 snap) +
+            // GetAsyncKeyState 폴링(마우스 throw) + WM_DISPLAYCHANGE 모니터 감지.
+            // AppState 의 구체 Win32MonitorProvider 인스턴스를 전달하여
+            // 디스플레이 변경 시 invalidate() 가 snap 경로 캐시에 닿도록 한다.
+            #[cfg(windows)]
+            {
+                let state = app.state::<presentation::state::AppState>();
+                crate::infrastructure::win32_input::Win32InputListener::start(
+                    state.snap_service.clone(),
+                    state.keyboard_service.clone(),
+                    state.config_store.clone(),
+                    state.monitor_provider.clone(),
+                );
             }
 
             #[cfg(debug_assertions)]

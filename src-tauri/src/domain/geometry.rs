@@ -44,18 +44,17 @@ impl MonitorBounds {
 ///   0=오른쪽, 1=오른쪽아래, 2=아래, 3=왼쪽아래,
 ///   4=왼쪽, 5=왼쪽위, 6=위, 7=오른쪽위
 pub fn compute_sector(delta: Vector2D<f64, Pixel>, sector_count: u8) -> u8 {
-    // 화면 좌표계(y축 아래가 양수)에서 atan2(y, x)는
-    // 0=오른쪽, y>0(아래)=시계방향 양수 각도를 갖는다.
-    // angle 범위: [-PI, PI]. 이를 [0, 2PI)로 정규화.
     let angle = delta.y.atan2(delta.x);
     let angle = if angle < 0.0 { angle + std::f64::consts::TAU } else { angle };
     let sector_size = std::f64::consts::TAU / sector_count as f64;
-    // 각도를 섹터 인덱스로 변환 (반올림으로 경계 처리)
     let index = ((angle + sector_size / 2.0) / sector_size).floor() as u8;
     index % sector_count
 }
 
-/// SnapTarget의 비율 좌표를 모니터의 픽셀 Rect로 변환
+/// SnapTarget의 비율 좌표를 모니터의 픽셀 Rect로 변환.
+///
+/// `round()` 를 사용하여 반올림 — `as i32`(버림)는 0.333*1920=639.36→639 처럼
+/// 누적 손실이 발생하여 snap 영역에 의도치 않은 마진이 생긴다.
 pub fn ratio_to_pixels(
     x_ratio: f64,
     y_ratio: f64,
@@ -65,12 +64,12 @@ pub fn ratio_to_pixels(
 ) -> Rect<i32, Pixel> {
     Rect::new(
         Point2D::new(
-            monitor.origin.x + (x_ratio * monitor.width() as f64) as i32,
-            monitor.origin.y + (y_ratio * monitor.height() as f64) as i32,
+            monitor.origin.x + (x_ratio * monitor.width() as f64).round() as i32,
+            monitor.origin.y + (y_ratio * monitor.height() as f64).round() as i32,
         ),
         Size2D::new(
-            (w_ratio * monitor.width() as f64) as i32,
-            (h_ratio * monitor.height() as f64) as i32,
+            (w_ratio * monitor.width() as f64).round() as i32,
+            (h_ratio * monitor.height() as f64).round() as i32,
         ),
     )
 }

@@ -135,6 +135,8 @@ pub struct GeneralConfig {
     pub start_minimized: bool,
     pub show_in_tray: bool,
     pub language: String,
+    /// Snap 영역의 여백(픽셀). 창 이동 및 미리보기에 동일하게 적용. 기본값 0.
+    pub snap_margin: u32,
 }
 
 impl Default for GeneralConfig {
@@ -144,6 +146,7 @@ impl Default for GeneralConfig {
             start_minimized: true,
             show_in_tray: true,
             language: "ko".to_string(),
+            snap_margin: 0,
         }
     }
 }
@@ -184,63 +187,70 @@ impl Default for ThrowConfig {
     }
 }
 
-/// 섹터 인덱스 → SnapTarget id 참조
-pub type SectorMap = std::collections::HashMap<u8, String>;
+/// 섹터 인덱스 → SnapTarget id 참조.
+///
+/// 내부적으로는 `HashMap<u8, String>` 이지만, TOML 직렬화 시 u8 key 를
+/// 지원하지 않으므로 serde 에서는 문자열 key (`"0"`, `"1"`, …) 로 변환한다.
+/// JSON(Tauri IPC)에서도 동일하게 문자열 key 로 직렬화된다 — 프론트엔드
+/// Zod `z.record(z.string(), z.string())` 와 일치.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SectorMap(pub std::collections::HashMap<u8, String>);
+
+impl SectorMap {
+    pub fn new() -> Self {
+        Self(std::collections::HashMap::new())
+    }
+    pub fn get(&self, key: &u8) -> Option<&String> {
+        self.0.get(key)
+    }
+    pub fn insert(&mut self, key: u8, value: String) {
+        self.0.insert(key, value);
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&u8, &String)> {
+        self.0.iter()
+    }
+}
+
+impl Serialize for SectorMap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use std::collections::BTreeMap;
+        // u8 key 를 문자열로 변환하여 정렬된 맵으로 직렬화 (TOML/JSON 호환).
+        let map: BTreeMap<String, &String> = self
+            .0
+            .iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        map.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SectorMap {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use std::collections::BTreeMap;
+        let map: BTreeMap<String, String> = BTreeMap::deserialize(deserializer)?;
+        let mut inner = std::collections::HashMap::new();
+        for (k, v) in map {
+            let idx: u8 = k.parse().map_err(serde::de::Error::custom)?;
+            inner.insert(idx, v);
+        }
+        Ok(SectorMap(inner))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardConfig {
     pub enabled: bool,
-    pub trigger_modifiers: Vec<String>,
-    pub modifier_mode: ModifierMode,
     pub cycle_timeout_ms: u64,
-    pub chains: ChainConfig,
 }
 
 impl Default for KeyboardConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            trigger_modifiers: vec!["Ctrl".to_string(), "Alt".to_string()],
-            modifier_mode: ModifierMode::Separate,
             cycle_timeout_ms: 1500,
-            chains: ChainConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ModifierMode {
-    /// throw 커서 무브와 같은 modifier 조합 공유
-    Shared,
-    /// 별개 modifier 조합 사용
-    Separate,
-    /// Windows 기본 Win+방향키 Snap을 가로채서 우리 snap으로 대체.
-    /// Win+방향키만 swallow하고 나머지 Win 조합은 정상 통과.
-    OverrideOs,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChainConfig {
-    pub horizontal: Vec<String>,
-    pub vertical: Vec<String>,
-}
-
-impl Default for ChainConfig {
-    fn default() -> Self {
-        Self {
-            horizontal: vec![
-                "left-half".to_string(),
-                "third-left".to_string(),
-                "center".to_string(),
-                "third-right".to_string(),
-                "right-half".to_string(),
-            ],
-            vertical: vec![
-                "maximize".to_string(),
-                "almost-maximize".to_string(),
-                "center".to_string(),
-                "maximize-height".to_string(),
-            ],
         }
     }
 }
@@ -347,13 +357,5 @@ mod tests {
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(config, parsed);
-    }
-
-    #[test]
-    fn chain_config_default_vertical() {
-        let chains = ChainConfig::default();
-        assert_eq!(chains.vertical, vec![
-            "maximize", "almost-maximize", "center", "maximize-height"
-        ]);
     }
 }

@@ -6,8 +6,7 @@
 
 use rectangle_win::domain::cursor_fsm::{CursorEvent, CursorFsm, FsmContext};
 use rectangle_win::domain::geometry;
-use rectangle_win::domain::keyboard_chain::ChainCycle;
-use rectangle_win::domain::model::{Config, Direction, SnapTarget};
+use rectangle_win::domain::model::{Config, SnapTarget};
 use rectangle_win::domain::presets::SnapPreset;
 
 // statig의 상태머신 빌더 트레이트 — `.uninitialized_state_machine()` /
@@ -102,39 +101,4 @@ fn fsm_and_geometry_integration() {
 
     let sector = fsm.inner().current_sector.expect("섹터가 산출되어야 함");
     assert_eq!(sector, 7, "오른쪽위 대각선은 섹터 7");
-}
-
-#[test]
-fn chain_cycle_with_default_config() {
-    let config = Config::default();
-    let mut cycle = ChainCycle::new(config.keyboard.cycle_timeout_ms);
-    let h_chain = &config.keyboard.chains.horizontal;
-
-    // 첫 탭: 새 시퀀스 → 인덱스 0 ("left-half")
-    let idx0 = cycle
-        .next_index(Direction::Right, 1, h_chain)
-        .expect("next_index 실패");
-    assert_eq!(idx0, 0);
-    assert_eq!(h_chain[idx0], "left-half");
-
-    // 같은 창·같은 축·타임아웃 내 연속 탭 → 인덱스 1 ("third-left")
-    let idx1 = cycle
-        .next_index(Direction::Right, 1, h_chain)
-        .expect("next_index 실패");
-    assert_eq!(idx1, 1);
-    assert_eq!(h_chain[idx1], "third-left");
-}
-
-#[test]
-fn vertical_chain_default_values() {
-    let config = Config::default();
-    assert_eq!(
-        config.keyboard.chains.vertical,
-        vec![
-            "maximize",
-            "almost-maximize",
-            "center",
-            "maximize-height",
-        ]
-    );
 }

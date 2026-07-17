@@ -8,7 +8,6 @@ import SaveBar from '@/components/SaveBar.vue'
 import SnapCanvas from '@/components/SnapCanvas.vue'
 import SnapProperties from '@/components/SnapProperties.vue'
 import SectorMapping from '@/components/SectorMapping.vue'
-import ChainEditor from '@/components/ChainEditor.vue'
 import type { SnapTarget, SnapPresetName } from '@/entities/config'
 
 const { t } = useI18n()
@@ -30,12 +29,12 @@ const presetItems = computed(() => [
 const tabItems = computed(() => [
   { label: t('snapEditor.tabs.areas'), slot: 'areas', icon: 'i-lucide-layout-grid' },
   { label: t('snapEditor.tabs.sectorMapping'), slot: 'mapping', icon: 'i-lucide-pie-chart' },
-  { label: t('snapEditor.tabs.chains'), slot: 'chains', icon: 'i-lucide-link' },
 ])
 
-const areas = computed(() =>
-  store.draft?.snap.areas.filter((a): a is Extract<SnapTarget, { kind: 'area' }> => a.kind === 'area') ?? [],
-)
+const selectedArea = computed(() => {
+  const t = store.draft?.snap.areas.find(a => a.id === selectedId.value) ?? null
+  return t && t.kind === 'area' ? t : null
+})
 
 const selectedTarget = computed(() =>
   store.draft?.snap.areas.find(a => a.id === selectedId.value) ?? null,
@@ -75,6 +74,11 @@ function addTarget(kind: 'area' | 'action') {
     : { kind: 'action', id, name, action: 'Maximize' }
   store.draft.snap.areas.push(target)
   selectedId.value = id
+}
+
+async function onSave() {
+  console.log('[SnapEditor] onSave 호출')
+  await store.save()
 }
 
 async function applyPreset(presetName: string) {
@@ -149,11 +153,10 @@ async function applyPreset(presetName: string) {
               </div>
             </div>
 
-            <!-- 중앙: vue-konva 캔버스 -->
+            <!-- 중앙: vue-konva 캔버스 (선택된 영역만 표시) -->
             <SnapCanvas
-              :areas="areas"
+              :area="selectedArea"
               :selected-id="selectedId"
-              @select="selectTarget"
               @update="(id, patch) => updateTarget(id, patch)"
             />
 
@@ -181,20 +184,9 @@ async function applyPreset(presetName: string) {
             />
           </div>
         </template>
-
-        <!-- Tab 3: Keyboard Chains -->
-        <template #chains>
-          <div class="py-4">
-            <ChainEditor
-              :chains="store.draft.keyboard.chains"
-              :targets="store.draft.snap.areas"
-              @update:chains="store.draft!.keyboard.chains = $event"
-            />
-          </div>
-        </template>
       </UTabs>
 
-      <SaveBar :dirty="store.isDirty" :saving="store.saving" @save="store.save()" @reset="store.reset()" />
+      <SaveBar :dirty="store.isDirty" :saving="store.saving" @save="onSave" @reset="store.reset()" />
     </template>
 
     <div v-else-if="store.loading" class="py-8 text-center text-muted">
