@@ -125,7 +125,7 @@ impl WindowMover for Win32WindowMover {
                 // SWP_FRAMECHANGED 로 프레임 재계산 — DWM 테두리/그림자로 인한
                 // 공간 남김 현상 완화.
                 unsafe {
-                    ShowWindow(hwnd, SW_RESTORE);
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
                     SetWindowPos(
                         hwnd,
                         HWND_TOP,

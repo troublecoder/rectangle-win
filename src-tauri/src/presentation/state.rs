@@ -69,14 +69,14 @@ impl AppState {
             Arc::new(crate::application::mock::MockMonitorProvider::default());
 
         // 오버레이 컨트롤러 — Windows 는 DirectComposition 기반 Win32LayeredOverlay,
-        // 비Windows 는 TauriOverlay (emit 없이 상태만 보관, CI/컴파일용).
+        // 비Windows 는 MockOverlayController (emit 없이 상태만 보관, CI/컴파일용).
         #[cfg(windows)]
         let overlay: Arc<dyn OverlayController> = Arc::new(
             crate::infrastructure::win32_overlay::Win32LayeredOverlay::new(config_store.clone()),
         );
         #[cfg(not(windows))]
         let overlay: Arc<dyn OverlayController> =
-            Arc::new(crate::infrastructure::overlay_window::TauriOverlay::new());
+            Arc::new(crate::application::mock::MockOverlayController::default());
 
         let snap_service = Arc::new(SnapService::new(
             window_mover.clone(),

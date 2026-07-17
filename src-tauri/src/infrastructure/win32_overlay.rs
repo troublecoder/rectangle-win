@@ -20,10 +20,7 @@
 //! 색상/반경/투명도는 `OverlayConfig` 에서 읽어 반영.
 //!
 //! 설계 요점:
-//! - 창은 항상 "현재 snap preview 사각형"만큼의 크기로 위치한다.
-//!   preview 가 없으면(초기 lock-on/숨김) 1x1 로 축소한다.
-//!   이렇게 하면 항상-전체화면-최상위 창이 작업표시줄 팝업/컨텍스트 메뉴/
-//!   타이틀바 버튼을 가리는 문제를 막는다.
+//! - 창은 가상 데스크톱 전체 크기로 한 번 생성후 고정한다. 크기/위치 이동은 없다.
 //! - show/hide: `visible=false` 시 `SW_HIDE`, `visible=true` 시 `SW_SHOWNOACTIVATE`.
 //!   창이 숨겨진 동안에는 시스템 UI 를 가리지 않는다.
 //! - 모든 상태 변경마다 전체 재그리기 (D2D 는 충분히 빠름).
@@ -58,10 +55,10 @@ use windows::Win32::Graphics::Gdi::{
     HGDIOBJ, SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, SetWindowPos, ShowWindow,
+    CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, ShowWindow,
     UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW, HTTRANSPARENT, SM_CXVIRTUALSCREEN,
     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOZORDER, UPDATE_LAYERED_WINDOW_FLAGS, ULW_ALPHA, WINDOW_EX_STYLE,
+    UPDATE_LAYERED_WINDOW_FLAGS, ULW_ALPHA, WINDOW_EX_STYLE,
     WINDOW_STYLE, WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOPMOST,
     WS_EX_TRANSPARENT, WS_POPUP,
 };
@@ -101,7 +98,6 @@ pub struct Win32LayeredOverlay {
 ///
 /// - `hwnd`: layered 오버레이 창.
 /// - `hdc_mem`: DIB 를 선택한 메모리 DC. UpdateLayeredWindow 의 소스 DC.
-/// - `hbitmap`: 32bpp DIB section (ARGB). Direct2D 가 여기에 픽셀을 기록.
 /// - `dc_render_target`: DIB DC 에 바인딩된 Direct2D render target.
 /// - `brush` / `dash_style`: 매 재사용.
 ///
@@ -111,7 +107,6 @@ pub struct Win32LayeredOverlay {
 struct OverlayResources {
     hwnd: HWND,
     hdc_mem: HDC,
-    hbitmap: HBITMAP,
     /// 이전 비트맵(기본 1x1 모노). DeleteObject 로 정리용 보관.
     _previous_bmp: HGDIOBJ,
     dc_render_target: ID2D1DCRenderTarget,
@@ -134,11 +129,11 @@ impl Win32LayeredOverlay {
     pub fn new(config_store: Arc<dyn ConfigStore>) -> Self {
         let resources = match Self::init_resources() {
             Ok(r) => {
-                eprintln!("[OVERLAY] init_resources 성공 (layered 창 + D2D 준비됨)");
+                log::info!("[OVERLAY] init_resources 성공 (layered 창 + D2D 준비됨)");
                 Some(r)
             }
             Err(e) => {
-                eprintln!("[OVERLAY] init_resources 실패: {e} — 오버레이 비활성, snap만 작동");
+                log::error!("[OVERLAY] init_resources 실패: {e} — 오버레이 비활성, snap만 작동");
                 None
             }
         };
@@ -202,6 +197,9 @@ impl Win32LayeredOverlay {
             let _ = unsafe { DeleteDC(hdc_mem) };
             return Err(e);
         }
+        // hbitmap 은 DIB 가 hdc_mem 에 선택된 상태로 유지되므로 별도 보관 불필요.
+        // 정리 시 DeleteDC(hdc_mem) 이 선택된 비트맵까지 해제한다.
+        let _ = hbitmap;
 
         // 6. 범용 브러시 + 점선 stroke style.
         let brush: ID2D1SolidColorBrush = unsafe {
@@ -236,7 +234,6 @@ impl Win32LayeredOverlay {
         Ok(OverlayResources {
             hwnd,
             hdc_mem,
-            hbitmap,
             _previous_bmp: previous_bmp,
             dc_render_target,
             d2d_factory,
@@ -364,64 +361,9 @@ impl Win32LayeredOverlay {
             .map(|c| c.overlay)
             .unwrap_or_default();
         if let Err(e) = Self::draw_scene(res, &state, &overlay_cfg) {
-            eprintln!("[OVERLAY] draw_scene 실패: {e}");
+            log::error!("[OVERLAY] draw_scene 실패: {e}");
         }
         let _ = unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
-    }
-
-    /// 오버레이 창을 지정한 사각형(x, y, w, h — 가상 화면 좌표)으로 이동/크기 변경.
-    ///
-    /// `SetWindowPos` 로 창 위치/크기를 갱신하고, 크기가 바뀌면 DIB section 을
-    /// 재할당하고 DC render target 을 다시 바인딩한다.
-    fn position_overlay(
-        res: &mut OverlayResources,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-    ) -> windows::core::Result<()> {
-        let w = w.max(1);
-        let h = h.max(1);
-        unsafe {
-            SetWindowPos(
-                res.hwnd,
-                None,
-                x,
-                y,
-                w,
-                h,
-                SWP_NOACTIVATE | SWP_NOZORDER,
-            )?;
-        }
-        if res.width != w || res.height != h {
-            Self::resize_dib(res, w, h)?;
-            res.width = w;
-            res.height = h;
-        }
-        Ok(())
-    }
-
-    /// DIB section 재할당 + DC render target 재바인딩.
-    /// 크기가 자주 바뀌면 비용이 크지만, snap preview rect 변경 시에만 호출된다.
-    fn resize_dib(res: &mut OverlayResources, w: i32, h: i32) -> windows::core::Result<()> {
-        // 기존 DIB 해제 순서: 이전 비트맵 복구 → DeleteObject(hbitmap) → 새 DIB 선택.
-        let (new_hdc, new_bmp, new_prev) = Self::create_dib(w, h)?;
-        // 기존 DC 의 DIB 정리.
-        // 주의: CreateCompatibleDC 가 새 DC 를 만들었다. 기존 DC 도 교체한다.
-        let _ = unsafe { SelectObject(res.hdc_mem, res._previous_bmp) };
-        let _ = unsafe { DeleteObject(res.hbitmap) };
-        let _ = unsafe { DeleteDC(res.hdc_mem) };
-        res.hdc_mem = new_hdc;
-        res.hbitmap = new_bmp;
-        res._previous_bmp = new_prev;
-        let bind_rect = RECT {
-            left: 0,
-            top: 0,
-            right: w,
-            bottom: h,
-        };
-        unsafe { res.dc_render_target.BindDC(res.hdc_mem, &bind_rect)? };
-        Ok(())
     }
 
     /// 실제 장면 그리기 — snap 미리보기 점선 사각형만 그린다.
@@ -435,10 +377,8 @@ impl Win32LayeredOverlay {
     /// - lock-on: `show_snap_preview` 만 호출 (active_sector=None → RED)
     /// - throw:   `highlight_sector` → `show_snap_preview` (active_sector=Some → BLUE)
     ///
-    /// **좌표계:** 오버레이 창은 항상 snap preview rect (sx, sy, sw, sh) 와 동일한
-    /// 위치/크기로 맞춰진다 (`redraw` → `position_overlay`). 따라서 사각형은
-    /// 창-로컬 좌표 (0, 0)~(sw, sh) 로 그린다. (sx, sy) 가 가상 화면 좌표더라도
-    /// 창 자체가 (sx, sy) 에 배치되므로 로컬 원점이 된다.
+    /// **좌표계:** 오버레이 창은 가상 데스크톱 전체 크기로 고정되므로
+    ///snap preview 사각형은 가상 화면 절대 좌표 (sx, sy, sw, sh) 그대로 그린다.
     ///
     /// 그린 후 반드시 `UpdateLayeredWindow` 로 DIB 픽셀을 창에 반영해야 한다
     /// (그렇지 않으면 화면에 나타나지 않는다).

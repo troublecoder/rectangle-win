@@ -173,7 +173,7 @@ impl KeyboardService {
         // snap 후 새 창 위치를 overlay 로 표시 — 사용자가 어디에 락온되어 있는지 확인.
         // show_reticle 으로 overlay 창을 visible + active_sector=None (RED lock-on 색상).
         let center = monitor.center();
-        let _ = self.overlay.show_reticle(center.x, center.y, 8);
+        let _ = self.overlay.show_reticle(center.x, center.y, config.overlay.sector_count);
         // snap 된 창의 새 rect 를 overlay 에 표시.
         if let Ok(new_rect) = self.window_mover.get_window_rect(window) {
             let _ = self.overlay.show_snap_preview(

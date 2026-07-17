@@ -13,7 +13,7 @@ export const defaultConfig: Config = {
     snap_margin: 0,
   },
   snap: {
-    active_preset: 'standard',
+    active_preset: 'full',
     areas: [
       { kind: 'area', id: 'left-half', name: 'Left Half', x_ratio: 0, y_ratio: 0, w_ratio: 0.5, h_ratio: 1 },
       { kind: 'area', id: 'right-half', name: 'Right Half', x_ratio: 0.5, y_ratio: 0, w_ratio: 0.5, h_ratio: 1 },

@@ -32,6 +32,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 
 # 로깅 / 비동기 런타임
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["full"] }

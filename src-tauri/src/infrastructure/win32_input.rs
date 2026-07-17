@@ -185,27 +185,27 @@ impl Win32InputListener {
                                     last = (cx, cy, dx, dy);
                                 }
                                 if let Err(e) = ss.on_mouse_moved(last.0, last.1, last.2, last.3) {
-                                    eprintln!("mouse moved 오류: {e}");
+                                    log::error!("mouse moved 오류: {e}");
                                 }
                             }
                             HookMsg::ThrowPressed { cx, cy } => {
                                 if let Err(e) = ss.on_modifier_pressed(cx, cy) {
-                                    eprintln!("throw pressed 오류: {e}");
+                                    log::error!("throw pressed 오류: {e}");
                                 }
                             }
                             HookMsg::ThrowReleased { cx, cy } => {
                                 if let Err(e) = ss.on_modifier_released(false, cx, cy) {
-                                    eprintln!("throw released 오류: {e}");
+                                    log::error!("throw released 오류: {e}");
                                 }
                             }
                             HookMsg::DirectionKey { dir, cx, cy } => {
                                 if let Err(e) = ks.on_direction_key(dir, cx, cy) {
-                                    eprintln!("키보드 snap 오류: {e}");
+                                    log::error!("키보드 snap 오류: {e}");
                                 }
                             }
                             HookMsg::ThrowCancel { cx, cy } => {
                                 if let Err(e) = ss.on_modifier_released(true, cx, cy) {
-                                    eprintln!("throw cancel 오류: {e}");
+                                    log::error!("throw cancel 오류: {e}");
                                 }
                             }
                         }
@@ -229,7 +229,7 @@ impl Win32InputListener {
                     *slot = Some(tid);
                 }
                 if let Err(e) = run_message_loop(&mp) {
-                    eprintln!("입력 리스너 오류: {e}");
+                    log::error!("입력 리스너 오류: {e}");
                 }
             })
             .expect("입력 리스너 스레드 시작 실패");
@@ -281,7 +281,7 @@ fn run_message_loop(monitor_provider: &Win32MonitorProvider) -> windows::core::R
         unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), None, 0)? };
     let mouse_hook: HHOOK =
         unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0)? };
-    eprintln!("LL 훅 설치 완료 (keyboard + mouse)");
+    log::info!("LL 훅 설치 완료 (keyboard + mouse)");
 
     // GetMessageW 루프 — LL 훅 콜백 발화 조건.
     let mut msg = MSG::default();
@@ -307,7 +307,7 @@ fn run_message_loop(monitor_provider: &Win32MonitorProvider) -> windows::core::R
         let _ = UnhookWindowsHookEx(kb_hook);
         let _ = UnhookWindowsHookEx(mouse_hook);
     }
-    eprintln!("LL 훅 해제 완료");
+    log::info!("LL 훅 해제 완료");
     Ok(())
 }
 

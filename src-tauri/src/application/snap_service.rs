@@ -125,44 +125,50 @@ impl SnapService {
             geometry::compute_sector(euclid::Vector2D::new(dx, dy), sector_count)
         };
 
-        let mut inner = self.inner.lock();
-        let distance = geometry::throw_distance(euclid::Vector2D::new(delta_x, delta_y));
-        match inner.state {
-            SnapState::Idle => {
-                // Idle에서는 이벤트 무시 (FSM과 동일)
-            }
-            SnapState::Armed => {
-                if distance >= MIN_THROW_DISTANCE {
-                    inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
-                    inner.fsm.throw_distance = distance;
-                    inner.state = SnapState::Tracking;
-                    inner.sector_changed = true;
+        // 상태 갱신은 임계구역 안에서 수행하고, overlay 호출 전에 락을 해제한다.
+        // overlay 구현체가 동일 락을 재진입하거나 느린 작업(D2D 렌더링)을 수행하므로
+        // 락 홀드 시간을 최소화하기 위함이다.
+        let sector_to_highlight = {
+            let mut inner = self.inner.lock();
+            let distance = geometry::throw_distance(euclid::Vector2D::new(delta_x, delta_y));
+            match inner.state {
+                SnapState::Idle => {
+                    // Idle에서는 이벤트 무시 (FSM과 동일)
+                }
+                SnapState::Armed => {
+                    if distance >= MIN_THROW_DISTANCE {
+                        inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
+                        inner.fsm.throw_distance = distance;
+                        inner.state = SnapState::Tracking;
+                        inner.sector_changed = true;
+                    }
+                }
+                SnapState::Tracking => {
+                    // sector 계산 — 방향 전환 즉시 반영.
+                    // 깜빡임 방지는 동일 sector면 overlay 갱신 스킵으로 처리 (아래).
+                    let new_sector = compute_sector(delta_x, delta_y);
+                    let prev_sector = inner.fsm.current_sector;
+                    if prev_sector != Some(new_sector) {
+                        // sector가 바뀐 경우만 갱신 — 불필요한 redraw 방지.
+                        inner.fsm.current_sector = Some(new_sector);
+                        inner.fsm.throw_distance = distance;
+                        inner.sector_changed = true;
+                    } else {
+                        inner.fsm.throw_distance = distance;
+                        inner.sector_changed = false;
+                    }
                 }
             }
-            SnapState::Tracking => {
-                // sector 계산 — 방향 전환 즉시 반영.
-                // 깜빡임 방지는 동일 sector면 overlay 갱신 스킵으로 처리 (아래).
-                let new_sector = compute_sector(delta_x, delta_y);
-                let prev_sector = inner.fsm.current_sector;
-                if prev_sector != Some(new_sector) {
-                    // sector가 바뀐 경우만 갱신 — 불필요한 redraw 방지.
-                    inner.fsm.current_sector = Some(new_sector);
-                    inner.fsm.throw_distance = distance;
-                    inner.sector_changed = true;
-                } else {
-                    inner.fsm.throw_distance = distance;
-                    inner.sector_changed = false;
-                }
-            }
-        }
 
-        // Tracking 상태에서 sector가 바뀐 경우만 overlay 갱신.
-        let sector_to_highlight = match inner.state {
-            SnapState::Tracking if inner.fsm.throw_distance >= MIN_THROW_DISTANCE => {
-                inner.fsm.current_sector
+            // Tracking 상태에서 sector가 바뀐 경우만 overlay 갱신.
+            match inner.state {
+                SnapState::Tracking if inner.fsm.throw_distance >= MIN_THROW_DISTANCE => {
+                    inner.fsm.current_sector
+                }
+                _ => None,
             }
-            _ => None,
-        };
+        }; // inner lock dropped here.
+
         if let Some(sector) = sector_to_highlight {
             // throw target 표시: highlight_sector 가 active_sector 를 Some 으로 만들어
             // draw_scene 이 sector_highlight_color (BLUE)로 snap_preview 를 그리도록 함.
@@ -250,8 +256,6 @@ impl SnapService {
         inner.state = SnapState::Idle;
         inner.fsm = CursorFsm::default();
     }
-
-    /// 현재 섹터(테스트/디버그용).
 
     /// 주어진 sector 에 매핑된 SnapTarget 의 픽셀 영역을 계산 (미리보기용).
     /// Area 타입만 미리보기 가능 — Action 타입은 None 반환.
@@ -570,7 +574,7 @@ mod tests {
         let (service, _w, _m, overlay, _c) = make_service();
         service.on_modifier_pressed(960, 540).unwrap();
 
-        // 100px 오른쪽 이동 (>= 8.0 임계값) — 섹터 0, throw target 표시
+        // 100px 오른쪽 이동 (>= 15.0 임계값) — 섹터 0, throw target 표시
         service.on_mouse_moved(1060, 540, 100.0, 0.0).unwrap();
         assert_eq!(service.current_sector(), Some(0));
         // active_sector 가 Some 으로 전환 — BLUE 색상 신호.
