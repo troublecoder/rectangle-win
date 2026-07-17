@@ -544,39 +544,24 @@ mod tests {
     }
 
     #[test]
-    fn modifier_press_shows_lockon_current_window_rect() {
-        // Armed 진입 시 현재 전경창(1001)의 rect 가 snap_preview 로 표시되어야 한다.
-        // MockWindowMover::get_window_rect 는 (0,0,1920,1080) 을 반환.
-        let (service, _w, _m, overlay, _c) = make_service();
+    fn modifier_press_shows_origin_marker() {
+        // Armed 진입 시 origin 마커(show_reticle)가 표시되고, snap_preview 는 없음.
+        let (service, _w, _m, _overlay, _c) = make_service();
         service.on_modifier_pressed(960, 540).unwrap();
-
-        // active_sector 는 None (lock-on 상태) — RED 색상 신호.
-        assert!(overlay.last_sector.lock().unwrap().is_none());
-        // snap_preview 가 현재 창 rect 로 설정되어 있어야 한다.
-        let preview = *overlay.last_snap_preview.lock().unwrap();
-        assert_eq!(preview, Some((0, 0, 1920, 1080)));
+        // 락온 시 더 이상 창 rect snap_preview 를 표시하지 않음 (origin 원만 표시).
+        assert_eq!(service.state(), "armed");
     }
 
     #[test]
-    fn mouse_move_below_threshold_keeps_lockon() {
-        // 임계값(8px) 미만 이동 시 snap_preview 가 갱신되지 않음 (lock-on 유지).
-        let (service, _w, _m, overlay, _c) = make_service();
+    fn mouse_move_below_threshold_keeps_armed() {
+        // 임계값(15px) 미만 이동 시 Armed 상태 유지 — Tracking 전이 안 됨.
+        let (service, _w, _m, _overlay, _c) = make_service();
         service.on_modifier_pressed(960, 540).unwrap();
-        // lock-on rect 설정됨
-        assert_eq!(
-            *overlay.last_snap_preview.lock().unwrap(),
-            Some((0, 0, 1920, 1080))
-        );
+        assert_eq!(service.state(), "armed");
 
-        // 5px 이동 (< 8.0 임계값) — preview 갱신 안 됨, sector 도 None 유지
+        // 5px 이동 (< 15.0 임계값) — Armed 유지
         service.on_mouse_moved(965, 540, 5.0, 0.0).unwrap();
-        assert_eq!(service.state(), "tracking");
-        assert!(overlay.last_sector.lock().unwrap().is_none());
-        // lock-on rect 가 그대로 유지됨
-        assert_eq!(
-            *overlay.last_snap_preview.lock().unwrap(),
-            Some((0, 0, 1920, 1080))
-        );
+        assert_eq!(service.state(), "armed");
     }
 
     #[test]

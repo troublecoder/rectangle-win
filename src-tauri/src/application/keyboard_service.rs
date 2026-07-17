@@ -304,7 +304,7 @@ mod tests {
         let result = service.on_direction_key(Direction::Right, 100, 100).unwrap();
         assert_eq!(result, Some("left-half".to_string()));
 
-        let calls = window_mover.snap_calls();
+        let calls = window_mover.apply_snap_calls();
         assert_eq!(calls.len(), 1);
         if let MockWindowCall::ApplySnap { target_id, .. } = &calls[0] {
             assert_eq!(target_id, "left-half");
@@ -321,7 +321,7 @@ mod tests {
         let result = service.on_direction_key(Direction::Right, 100, 100).unwrap(); // 1 → center
 
         assert_eq!(result, Some("center".to_string()));
-        assert_eq!(window_mover.snap_calls().len(), 2);
+        assert_eq!(window_mover.apply_snap_calls().len(), 2);
     }
 
     #[test]
@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(r2, Some("center".to_string()));
         assert_eq!(r3, Some("right-half".to_string()));
         assert_eq!(r4, Some("left-half".to_string())); // wrap
-        assert_eq!(window_mover.snap_calls().len(), 4);
+        assert_eq!(window_mover.apply_snap_calls().len(), 4);
     }
 
     #[test]
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(r1, Some("maximize".to_string()));
         assert_eq!(r2, Some("restore".to_string()));
 
-        let calls = window_mover.snap_calls();
+        let calls = window_mover.apply_snap_calls();
         assert_eq!(calls.len(), 2);
         if let MockWindowCall::ApplySnap {
             target_id, is_action, ..
@@ -431,7 +431,7 @@ mod tests {
         }
         let result = service.on_direction_key(Direction::Right, 100, 100).unwrap();
         assert_eq!(result, None);
-        assert!(window_mover.snap_calls().is_empty());
+        assert!(window_mover.apply_snap_calls().is_empty());
     }
 
     #[test]
@@ -450,7 +450,7 @@ mod tests {
             .on_direction_key(Direction::UpRight, 100, 100)
             .unwrap();
         assert_eq!(result, None);
-        assert!(window_mover.snap_calls().is_empty());
+        assert!(window_mover.apply_snap_calls().is_empty());
     }
 
     #[test]
@@ -463,6 +463,6 @@ mod tests {
         }
         let result = service.on_direction_key(Direction::Right, 100, 100).unwrap();
         assert_eq!(result, None);
-        assert!(window_mover.snap_calls().is_empty());
+        assert!(window_mover.apply_snap_calls().is_empty());
     }
 }
