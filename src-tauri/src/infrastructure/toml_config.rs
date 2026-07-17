@@ -77,8 +77,8 @@ impl TomlConfigStore {
 
         let mut config = Config::default();
         // extended 프리셋 사용 — chain 기본값이 참조하는 모든 target 포함.
-        config.snap.active_preset = "extended".to_string();
-        config.snap.areas = SnapPreset::Extended.targets();
+        config.snap.active_preset = "full".to_string();
+        config.snap.areas = SnapPreset::Full.targets();
 
         // 8섹터 throw 매핑 — 시계방향, 0번=오른쪽(E).
         // 섹터 번호는 domain::model::Sector 주석 기준:
