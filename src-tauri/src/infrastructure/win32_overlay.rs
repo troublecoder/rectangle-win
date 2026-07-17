@@ -42,13 +42,14 @@ use std::sync::{Arc, Mutex};
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH, D2D1_DEBUG_LEVEL_NONE, D2D1_FACTORY_OPTIONS,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_STROKE_STYLE_PROPERTIES1,
-    D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory1, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_DASH, D2D1_DEBUG_LEVEL_NONE, D2D1_ELLIPSE,
+    D2D1_FACTORY_OPTIONS, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
+    D2D1_STROKE_STYLE_PROPERTIES1, D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory1,
+    ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
@@ -355,7 +356,8 @@ impl Win32LayeredOverlay {
             let _ = unsafe { ShowWindow(res.hwnd, SW_HIDE) };
             return;
         }
-        let _ = unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
+        // draw_scene을 먼저 — 창이 보이기 전에 DIB를 새 내용으로 갱신.
+        // 그 후 ShowWindow로 표시 → 이전 프리뷰가 깜빡이지 않음.
         let overlay_cfg = self
             .config_store
             .load()
@@ -364,6 +366,7 @@ impl Win32LayeredOverlay {
         if let Err(e) = Self::draw_scene(res, &state, &overlay_cfg) {
             eprintln!("[OVERLAY] draw_scene 실패: {e}");
         }
+        let _ = unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
     }
 
     /// 오버레이 창을 지정한 사각형(x, y, w, h — 가상 화면 좌표)으로 이동/크기 변경.
@@ -455,6 +458,23 @@ impl Win32LayeredOverlay {
                 b: 0.0,
                 a: 0.0,
             }));
+
+            // origin(락온 시 커서 위치)에 작은 원 표시 — 기준점 시각화.
+            if cfg.cursor_indicator {
+                if let Some((cx, cy)) = state.center {
+                    let origin_color = Self::parse_hex_color(&cfg.cursor_color);
+                    let mut c = origin_color;
+                    c.a = cfg.cursor_opacity as f32;
+                    res.brush.SetColor(&c);
+                    let r = cfg.cursor_radius as f32;
+                    let ellipse = D2D1_ELLIPSE {
+                        point: D2D_POINT_2F { x: cx as f32, y: cy as f32 },
+                        radiusX: r,
+                        radiusY: r,
+                    };
+                    res.dc_render_target.FillEllipse(&ellipse, &res.brush);
+                }
+            }
 
             // snap 미리보기 — 절대 좌표(가상 화면 좌표)로 그림.
             if cfg.snap_preview {
@@ -566,16 +586,15 @@ impl OverlayController for Win32LayeredOverlay {
     /// active_sector=None, snap_preview=None 으로 클리어하여 다음 show_snap_preview 가
     /// RED(lock-on) 로 그려지도록 한다.
     fn show_reticle(&self, center_x: i32, center_y: i32, sector_count: u8) -> AppResult<()> {
-        // 상태만 갱신 — redraw는 호출하지 않음.
-        // show_snap_preview가 이후에 호출되어 한 번에 그리도록 함.
-        // (show_reticle → show_snap_preview 순서로 호출되므로, redraw를 여기서
-        // 호출하면 이전 프리뷰가 잠깐 보였다가 새 락온으로 바뀌는 깜빡임 발생)
         let mut state = self.state.lock().unwrap();
         state.visible = true;
         state.center = Some((center_x, center_y));
         state.sector_count = sector_count;
         state.active_sector = None;
         state.snap_preview = None;
+        drop(state);
+        // redraw로 이전 프리뷰를 지우고 빈(투명) 상태로 만듦.
+        self.redraw();
         Ok(())
     }
 

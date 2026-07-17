@@ -32,9 +32,9 @@ enum SnapState {
 #[derive(Debug)]
 struct SnapInner {
     state: SnapState,
-    /// 도메인 FSM의 공유 저장소를 데이터 홀더로 재사용.
-    /// `current_sector` / `throw_distance` 만 사용한다.
     fsm: CursorFsm,
+    /// 이번 이벤트에서 sector가 변경되었는지 (overlay 갱신 최적화용).
+    sector_changed: bool,
 }
 
 impl Default for SnapInner {
@@ -42,6 +42,7 @@ impl Default for SnapInner {
         Self {
             state: SnapState::Idle,
             fsm: CursorFsm::default(),
+            sector_changed: false,
         }
     }
 }
@@ -85,21 +86,12 @@ impl SnapService {
         let config = self.config_store.load()?;
         let sector_count = config.overlay.sector_count;
 
-        let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
-        let center = monitor.center();
-        // show_reticle: overlay 창 visible + active_sector/snap_preview 초기화.
-        // 더 이상 커서 점을 그리지 않는다 (win32_overlay draw_scene 참조).
-        self.overlay
-            .show_reticle(center.x, center.y, sector_count)?;
+        // 이전 오버레이 상태를 먼저 지움 — 깜빡임 방지.
+        self.overlay.hide()?;
 
-        // Lock-on: 현재 전경창의 rect 를 snap_preview 로 표시.
-        // active_sector 가 None 인 상태이므로 RED(cursor_color)로 그려진다.
-        if let Some(handle) = self.window_mover.get_foreground_window() {
-            if let Ok(rect) = self.window_mover.get_window_rect(handle) {
-                self.overlay
-                    .show_snap_preview(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)?;
-            }
-        }
+        // show_reticle에 origin(커서 위치) 전달 — overlay가 origin에 작은 원을 그림.
+        self.overlay
+            .show_reticle(cursor_x, cursor_y, sector_count)?;
 
         let mut inner = self.inner.lock();
         inner.state = SnapState::Armed;
@@ -124,7 +116,7 @@ impl SnapService {
     ) -> AppResult<()> {
         // throw 로 간주하기 위한 최소 이동 거리 (픽셀).
         // 이 값 미만에서는 lock-on(현재 창 RED 사각형)을 유지.
-        const MIN_THROW_DISTANCE: f64 = 8.0;
+        const MIN_THROW_DISTANCE: f64 = 15.0;
 
         let config = self.config_store.load()?;
         let sector_count = config.overlay.sector_count;
@@ -140,32 +132,31 @@ impl SnapService {
                 // Idle에서는 이벤트 무시 (FSM과 동일)
             }
             SnapState::Armed => {
-                // Armed → Tracking 전이는 임계값 이상 이동 시에만.
-                // delta가 거의 0이면 Armed 유지 — modifier만 누르고 마우스 안 움직인 상태.
                 if distance >= MIN_THROW_DISTANCE {
                     inner.fsm.current_sector = Some(compute_sector(delta_x, delta_y));
                     inner.fsm.throw_distance = distance;
                     inner.state = SnapState::Tracking;
+                    inner.sector_changed = true;
                 }
-                // 임계값 미만: Armed 유지, sector/distance 갱신 안 함.
             }
             SnapState::Tracking => {
-                // Hysteresis — 현재 sector와 다른 sector가 계산되어도,
-                // 이동 거리 변화가 작으면(미세 흔들림) 기존 sector 유지.
-                // delta가 경계 근처에서 흔들려 섹터가 깜빡이는 현상 방지.
+                // sector 계산 — 방향 전환 즉시 반영.
+                // 깜빡임 방지는 동일 sector면 overlay 갱신 스킵으로 처리 (아래).
                 let new_sector = compute_sector(delta_x, delta_y);
-                let prev_distance = inner.fsm.throw_distance;
-                let distance_change = (distance - prev_distance).abs();
-                // 거리 변화가 15px 미만이면 기존 sector 유지 (미세 흔들림 필터).
-                if distance_change >= 15.0 {
+                let prev_sector = inner.fsm.current_sector;
+                if prev_sector != Some(new_sector) {
+                    // sector가 바뀐 경우만 갱신 — 불필요한 redraw 방지.
                     inner.fsm.current_sector = Some(new_sector);
+                    inner.fsm.throw_distance = distance;
+                    inner.sector_changed = true;
+                } else {
+                    inner.fsm.throw_distance = distance;
+                    inner.sector_changed = false;
                 }
-                inner.fsm.throw_distance = distance;
             }
         }
 
-        // Tracking 상태에서만 오버레이 갱신. 섹터값을 복사한 뒤 잠금을 풀고 overlay 호출.
-        // 임계값 미만의 throw_distance 에서는 lock-on 상태 유지 (preview 갱신 안 함).
+        // Tracking 상태에서 sector가 바뀐 경우만 overlay 갱신.
         let sector_to_highlight = match inner.state {
             SnapState::Tracking if inner.fsm.throw_distance >= MIN_THROW_DISTANCE => {
                 inner.fsm.current_sector
