@@ -8,7 +8,6 @@
 //! - **키보드 snap**: throw modifier 조합(기본 Win+Alt)이 모두 눌린 상태에서
 //!   방향키 DOWN 이 들어오면 `KeyboardService::on_direction_key` 호출 후
 //!   `LRESULT(1)` 반환으로 키를 삼킨다. UP 은 그대로 통과.
-//!   `general.override_win_snap` 활성 시 Win+방향키(Alt 없이)도 삼킨다.
 //! - **마우스 throw**: throw modifier 조합이 Idle→Held 로 전이되면 origin 캡처 +
 //!   `on_modifier_pressed`. WM_MOUSEMOVE 로 delta 계산 + `on_mouse_moved`.
 //!   Held→Idle 전이(또는 우/중 버튼 DOWN) 시 `on_modifier_released`.
@@ -57,8 +56,6 @@ static CACHED_ALT: AtomicBool = AtomicBool::new(true);
 static CACHED_CTRL: AtomicBool = AtomicBool::new(false);
 /// throw trigger 조합에 Shift 가 포함되어 있는지.
 static CACHED_SHIFT: AtomicBool = AtomicBool::new(false);
-/// `general.override_win_snap` — Win+방향키(Alt 없이)도 우리 snap 으로 삼킬지.
-static CACHED_OVERRIDE_WIN_SNAP: AtomicBool = AtomicBool::new(false);
 /// `keyboard.enabled` — 키보드 snap 기능 활성화 여부.
 static CACHED_KB_ENABLED: AtomicBool = AtomicBool::new(true);
 
@@ -74,7 +71,6 @@ fn update_config_static(config: &Config) {
     CACHED_ALT.store(mods.iter().any(|m| m == "Alt"), Ordering::Relaxed);
     CACHED_CTRL.store(mods.iter().any(|m| m == "Ctrl"), Ordering::Relaxed);
     CACHED_SHIFT.store(mods.iter().any(|m| m == "Shift"), Ordering::Relaxed);
-    CACHED_OVERRIDE_WIN_SNAP.store(config.general.override_win_snap, Ordering::Relaxed);
     CACHED_KB_ENABLED.store(config.keyboard.enabled, Ordering::Relaxed);
 }
 
@@ -375,7 +371,7 @@ unsafe extern "system" fn input_wndproc(
 
 /// WH_KEYBOARD_LL 콜백.
 ///
-/// - 방향키 + throw modifier (또는 override_win_snap 시 Win+방향키) DOWN →
+/// - 방향키 + throw modifier DOWN →
 ///   `on_direction_key` 호출 + 삼킴(LRESULT(1)). UP 은 통과.
 /// - throw modifier 조합 전이 감지 → SnapService::on_modifier_pressed/released.
 /// - 그 외 → CallNextHookEx (통과).

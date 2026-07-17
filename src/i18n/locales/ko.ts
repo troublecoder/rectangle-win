@@ -26,8 +26,6 @@ export default {
     showInTrayDesc: '알림 영역에 아이콘 표시',
     language: '언어',
     languageDesc: '인터페이스 언어',
-    overrideWinSnap: 'Windows 스냅 오버라이드',
-    overrideWinSnapDesc: 'Win+방향키를 가로채어 OS 스냅 동작을 우리 스냅으로 교체',
   },
   throw: {
     title: '윈도우 스로우',

@@ -102,10 +102,3 @@ fn fsm_and_geometry_integration() {
     let sector = fsm.inner().current_sector.expect("섹터가 산출되어야 함");
     assert_eq!(sector, 7, "오른쪽위 대각선은 섹터 7");
 }
-
-#[test]
-fn override_win_snap_default_false() {
-    // override_win_snap 기본값은 false 여야 한다.
-    let config = Config::default();
-    assert!(!config.general.override_win_snap);
-}

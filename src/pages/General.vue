@@ -55,13 +55,6 @@ function changeLanguage(lang: string) {
         </UFormField>
       </USection>
 
-      <!-- Windows Snap Override -->
-      <USection :title="t('general.overrideWinSnap')">
-        <UFormField :label="t('general.overrideWinSnap')" :description="t('general.overrideWinSnapDesc')">
-          <USwitch v-model="store.draft.general.override_win_snap" />
-        </UFormField>
-      </USection>
-
       <SaveBar :dirty="store.isDirty" :saving="store.saving" @save="store.save()" @reset="store.reset()" />
     </template>
 

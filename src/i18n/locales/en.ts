@@ -26,8 +26,6 @@ export default {
     showInTrayDesc: 'Display icon in the notification area',
     language: 'Language',
     languageDesc: 'Interface language',
-    overrideWinSnap: 'Override Windows Snap',
-    overrideWinSnapDesc: 'Intercept Win+Arrow keys and replace the OS snap behavior with our snap',
   },
   throw: {
     title: 'Window Throw',

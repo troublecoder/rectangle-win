@@ -10,7 +10,6 @@ export const defaultConfig: Config = {
     start_minimized: true,
     show_in_tray: true,
     language: 'ko',
-    override_win_snap: false,
     snap_margin: 0,
   },
   snap: {
