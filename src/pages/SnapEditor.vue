@@ -75,6 +75,11 @@ function addTarget(kind: 'area' | 'action') {
   selectedId.value = id
 }
 
+async function onSave() {
+  console.log('[SnapEditor] onSave 호출')
+  await store.save()
+}
+
 async function applyPreset(presetName: string) {
   if (!presetName) return
   try {
@@ -181,7 +186,7 @@ async function applyPreset(presetName: string) {
         </template>
       </UTabs>
 
-      <SaveBar :dirty="store.isDirty" :saving="store.saving" @save="store.save()" @reset="store.reset()" />
+      <SaveBar :dirty="store.isDirty" :saving="store.saving" @save="onSave" @reset="store.reset()" />
     </template>
 
     <div v-else-if="store.loading" class="py-8 text-center text-muted">

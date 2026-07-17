@@ -11,6 +11,7 @@ export const defaultConfig: Config = {
     show_in_tray: true,
     language: 'ko',
     override_win_snap: false,
+    snap_margin: 0,
   },
   snap: {
     active_preset: 'standard',

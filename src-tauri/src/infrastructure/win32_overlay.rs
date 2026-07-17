@@ -344,24 +344,18 @@ impl Win32LayeredOverlay {
 
     /// 현재 상태로 전체 재그리기 + 창 표시 제어.
     ///
-    /// 창은 항상 전체 가상 데스크톱 크기로 고정되어 있고(초기 생성 시 설정),
-    /// WS_EX_TRANSPARENT + WS_EX_LAYERED 로 클릭스루가 보장된다.
-    /// visible 플래그로 show/hide만 제어하고, 창 위치/크기는 바꾸지 않는다.
-    /// 깜빡임/위치 어긋남 문제를 근본적으로 해결.
+    /// 창은 전체 가상 데스크톱 크기로 고정. 절대 좌표로 그림.
     fn redraw(&self) {
         let res_guard = self.resources.lock().unwrap();
         let Some(res) = res_guard.as_ref() else {
-            return; // 초기화 실패 — no-op
+            return;
         };
         let state = self.state.lock().unwrap();
         if !state.visible {
-            // 숨김 — 창을 hide. 전체 화면이지만 WS_EX_TRANSPARENT로 클릭 통과.
             let _ = unsafe { ShowWindow(res.hwnd, SW_HIDE) };
             return;
         }
-        // 표시 — 창을 보이게 하고(포커스 없이) 절대 좌표로 그리기.
         let _ = unsafe { ShowWindow(res.hwnd, SW_SHOWNOACTIVATE) };
-        // OverlayConfig 로드 실패 시 기본값으로 폴백 (오버레이는 계속 동작).
         let overlay_cfg = self
             .config_store
             .load()
@@ -462,14 +456,10 @@ impl Win32LayeredOverlay {
                 a: 0.0,
             }));
 
-            // snap 미리보기 — 점선 사각형 외곽 + 반투명 채우기.
-            // config.snap_preview 가 true 일 때만 그린다.
-            // 색상 전환: active_sector 유무로 lock-on(RED) vs throw-target(BLUE) 구분.
-            // 창은 전체 가상 데스크톱이므로 절대 좌표(가상 화면 좌표)로 그린다.
+            // snap 미리보기 — 절대 좌표(가상 화면 좌표)로 그림.
             if cfg.snap_preview {
                 if let Some((sx, sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
-                        // 절대 좌표 — 프리뷰와 실제 SetWindowPos 가 동일한 좌표 사용.
                         let rect = D2D_RECT_F {
                             left: sx as f32,
                             top: sy as f32,
@@ -576,14 +566,16 @@ impl OverlayController for Win32LayeredOverlay {
     /// active_sector=None, snap_preview=None 으로 클리어하여 다음 show_snap_preview 가
     /// RED(lock-on) 로 그려지도록 한다.
     fn show_reticle(&self, center_x: i32, center_y: i32, sector_count: u8) -> AppResult<()> {
+        // 상태만 갱신 — redraw는 호출하지 않음.
+        // show_snap_preview가 이후에 호출되어 한 번에 그리도록 함.
+        // (show_reticle → show_snap_preview 순서로 호출되므로, redraw를 여기서
+        // 호출하면 이전 프리뷰가 잠깐 보였다가 새 락온으로 바뀌는 깜빡임 발생)
         let mut state = self.state.lock().unwrap();
         state.visible = true;
         state.center = Some((center_x, center_y));
         state.sector_count = sector_count;
         state.active_sector = None;
         state.snap_preview = None;
-        drop(state);
-        self.redraw();
         Ok(())
     }
 

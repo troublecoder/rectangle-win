@@ -55,7 +55,6 @@ pub fn get_config(state: State<'_, AppState>) -> CmdResult<Config> {
 #[tauri::command]
 pub fn save_config(state: State<'_, AppState>, config: Config) -> CmdResult<()> {
     state.config_store.save(&config)?;
-    // LL 훅 콜백이 읽는 static config 캐시를 갱신 (디스크 I/O 를 콜백에서 피하기 위함).
     #[cfg(windows)]
     crate::infrastructure::win32_input::Win32InputListener::update_config(&config);
     Ok(())

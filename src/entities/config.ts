@@ -56,6 +56,7 @@ export const generalConfigSchema = z.object({
   show_in_tray: z.boolean(),
   language: z.string(),
   override_win_snap: z.boolean(),
+  snap_margin: z.number(),
 })
 export type GeneralConfig = z.infer<typeof generalConfigSchema>
 

@@ -22,7 +22,7 @@
 //! (기존 win32_window/win32_monitor/win32_overlay 패턴과 동일).
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -33,10 +33,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetCursorPos,
-    HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, PostMessageW, PostThreadMessageW,
+    HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, PostThreadMessageW,
     RegisterClassExW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
     WH_MOUSE_LL, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT,
-    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_USER,
+    WM_RBUTTONDOWN, WM_SYSKEYDOWN,
 };
 
 use crate::application::keyboard_service::KeyboardService;
@@ -83,12 +83,23 @@ fn update_config_static(config: &Config) {
 // ────────────────────────────────────────────────────────────────────
 
 /// LL 훅 콜백이 접근하는 공유 컨텍스트.
+/// LL hook 콜백 → 작업 스레드로 보내는 메시지.
+enum HookMsg {
+    /// throw modifier 조합 눌림 — on_modifier_pressed.
+    ThrowPressed { cx: i32, cy: i32 },
+    /// throw modifier 조합 해제 — on_modifier_released.
+    ThrowReleased { cx: i32, cy: i32 },
+    /// 마우스 이동 (throw 중) — on_mouse_moved.
+    MouseMoved { cx: i32, cy: i32, dx: f64, dy: f64 },
+    /// 방향키 snap — on_direction_key.
+    DirectionKey { dir: Direction, cx: i32, cy: i32 },
+    /// 마우스 우클릭/중클릭 — snap 취소.
+    ThrowCancel { cx: i32, cy: i32 },
+}
+
 struct HookContext {
-    snap_service: Arc<SnapService>,
-    keyboard_service: Arc<KeyboardService>,
-    monitor_provider: Arc<Win32MonitorProvider>,
-    /// message-only 창 핸들 — PostMessage 타겟. AtomicPtr 로 스레드 간 공유.
-    hwnd: std::sync::atomic::AtomicPtr<std::ffi::c_void>,
+    /// 작업 스레드로 메시지 전송 — LL hook 콜백은 여기에 send 하고 즉시 반환.
+    tx: mpsc::Sender<HookMsg>,
     /// throw origin / 활성 상태 추적 (콜백 스레드에서만 접근 → Mutex 불필요).
     origin: std::cell::UnsafeCell<Option<(i32, i32)>>,
     throw_active: AtomicBool,
@@ -145,39 +156,83 @@ impl Win32InputListener {
         config_store: Arc<dyn ConfigStore>,
         monitor_provider: Arc<Win32MonitorProvider>,
     ) -> Self {
-        // Config 캐시 1차 갱신 — 디스크에서 로드 가능하면 캐시에 반영.
-        // 훅 설치 전에 수행하여 콜백이 시작과 동시에 올바른 config 를 본다.
+        // Config 캐시 1차 갱신.
         if let Ok(cfg) = config_store.load() {
             update_config_static(&cfg);
         }
 
-        // OnceLock 에 컨텍스트 등록 — hwnd 없이 먼저 세팅.
-        // hwnd 는 run_message_loop 안에서 생성 후 업데이트.
+        // 채널 생성 — LL hook 콜백 → 작업 스레드.
+        let (tx, rx) = mpsc::channel::<HookMsg>();
+
+        // OnceLock 에 컨텍스트 등록 (송신자만 — 콜백은 send 만 함).
         let _ = HOOK_CTX.set(HookContext {
-            snap_service: snap_service.clone(),
-            keyboard_service: keyboard_service.clone(),
-            monitor_provider: monitor_provider.clone(),
-            hwnd: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            tx,
             origin: std::cell::UnsafeCell::new(None),
             throw_active: AtomicBool::new(false),
         });
+
+        // 작업 스레드 — SnapService/KeyboardService 호출을 여기서 처리.
+        // LL hook 콜백(메시지 루프 스레드)과 분리되어 지연 없이 즉시 실행.
+        {
+            let ss = snap_service.clone();
+            let ks = keyboard_service.clone();
+            thread::Builder::new()
+                .name("input-worker".into())
+                .spawn(move || {
+                    while let Ok(msg) = rx.recv() {
+                        match msg {
+                            HookMsg::MouseMoved { cx, cy, dx, dy } => {
+                                // Coalescing — 큐에 쌓인 추가 MouseMoved 메시지를 소비하여
+                                // 마지막 것만 처리. D2D 전체 화면 렌더링 병목 해소.
+                                let mut last = (cx, cy, dx, dy);
+                                while let Ok(HookMsg::MouseMoved { cx, cy, dx, dy }) = rx.try_recv() {
+                                    last = (cx, cy, dx, dy);
+                                }
+                                if let Err(e) = ss.on_mouse_moved(last.0, last.1, last.2, last.3) {
+                                    eprintln!("mouse moved 오류: {e}");
+                                }
+                            }
+                            HookMsg::ThrowPressed { cx, cy } => {
+                                if let Err(e) = ss.on_modifier_pressed(cx, cy) {
+                                    eprintln!("throw pressed 오류: {e}");
+                                }
+                            }
+                            HookMsg::ThrowReleased { cx, cy } => {
+                                if let Err(e) = ss.on_modifier_released(false, cx, cy) {
+                                    eprintln!("throw released 오류: {e}");
+                                }
+                            }
+                            HookMsg::DirectionKey { dir, cx, cy } => {
+                                if let Err(e) = ks.on_direction_key(dir, cx, cy) {
+                                    eprintln!("키보드 snap 오류: {e}");
+                                }
+                            }
+                            HookMsg::ThrowCancel { cx, cy } => {
+                                if let Err(e) = ss.on_modifier_released(true, cx, cy) {
+                                    eprintln!("throw cancel 오류: {e}");
+                                }
+                            }
+                        }
+                    }
+                })
+                .expect("작업 스레드 시작 실패");
+        }
 
         // thread id 를 부모에게 전달하기 위한 슬롯.
         let thread_id_slot: Arc<std::sync::Mutex<Option<u32>>> =
             Arc::new(std::sync::Mutex::new(None));
         let slot_for_thread = thread_id_slot.clone();
+        let mp = monitor_provider.clone();
 
         thread::Builder::new()
             .name("win32-input".into())
             .spawn(move || {
-                // 자신의 thread id 를 부모에게 알림.
                 let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
                 {
                     let mut slot = slot_for_thread.lock().unwrap();
                     *slot = Some(tid);
                 }
-
-                if let Err(e) = run_message_loop() {
+                if let Err(e) = run_message_loop(&mp) {
                     eprintln!("입력 리스너 오류: {e}");
                 }
             })
@@ -221,21 +276,11 @@ impl Win32InputListener {
 ///
 /// LL 훅 콜백이 발화하려면 GetMessageW 처럼 스레드 메시지 큐에서
 /// 블로킹 대기하는 루프가 필요하다.
-fn run_message_loop() -> windows::core::Result<()> {
+fn run_message_loop(monitor_provider: &Win32MonitorProvider) -> windows::core::Result<()> {
     // message-only 창 생성 (WM_DISPLAYCHANGE 수신용).
-    let hwnd = create_message_window()?;
+    let _hwnd = create_message_window()?;
 
-    // HookContext 의 hwnd 업데이트 (start() 에서 null 로 세팅됨).
-    if let Some(ctx) = HOOK_CTX.get() {
-        ctx.hwnd.store(hwnd.0, Ordering::Relaxed);
-    }
-
-    // LL 훅 설치 — 반드시 메시지 루프 스레드에서.
-    // SAFETY: HMODULE(None) — LL 훅은 DLL 이 아닌 자체 프로세스에서 설치 가능
-    // (콜백 함수 주소는 프로세스 주소 공간에 있으므로). dwthreadid=0 은
-    // "현재 스레드" 를 의미 (LL 훅은 필수 — 다른 스레드의 입력 큐를 후크 불가).
-    // SetWindowsHookExW 의 hmod 파라미터는 Param<HINSTANCE> 를 받으나 LL 훅은
-    // 무시되므로 None 안전.
+    // LL 훅 설치.
     let kb_hook: HHOOK =
         unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), None, 0)? };
     let mouse_hook: HHOOK =
@@ -245,43 +290,16 @@ fn run_message_loop() -> windows::core::Result<()> {
     // GetMessageW 루프 — LL 훅 콜백 발화 조건.
     let mut msg = MSG::default();
     loop {
-        // SAFETY: msg 는 로컬 스택 버퍼. hwnd=None(0) → 모든 창 + 스레드 메시지.
-        // GetMessageW 는 WM_QUIT 수신 시 BOOL(0) 반환 → 루프 종료.
         let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
         if !ret.as_bool() {
-            // WM_QUIT 또는 오류.
             break;
         }
 
-        // WM_DISPLAYCHANGE 처리 (큐에서 꺼낸 후).
-        // LL 훅과 무관하게 디스플레이 변경 시 MonitorProvider 캐시를 무효화.
+        // WM_DISPLAYCHANGE — 모니터 캐시 무효화.
         if msg.message == WM_DISPLAYCHANGE {
-            if let Some(ctx) = HOOK_CTX.get() {
-                ctx.monitor_provider.invalidate();
-            }
+            monitor_provider.invalidate();
         }
 
-        // throw modifier 전이 처리 — LL 훅 콜백에서 PostMessage 로 위임된 작업.
-        // 콜백 내에서 직접 호출하면 config 로드/D2D 렌더링으로 LowLevelHooksTimeout 초과.
-        if msg.message == WM_USER + 1 {
-            // throw pressed
-            if let Some(ctx) = HOOK_CTX.get() {
-                let (cx, cy) = current_cursor();
-                if let Err(e) = ctx.snap_service.on_modifier_pressed(cx, cy) {
-                    eprintln!("throw on_modifier_pressed 오류: {e}");
-                }
-            }
-        } else if msg.message == WM_USER + 2 {
-            // throw released
-            if let Some(ctx) = HOOK_CTX.get() {
-                let (cx, cy) = current_cursor();
-                if let Err(e) = ctx.snap_service.on_modifier_released(false, cx, cy) {
-                    eprintln!("throw on_modifier_released 오류: {e}");
-                }
-            }
-        }
-
-        // SAFETY: msg 는 GetMessageW 로 채운 유효 메시지.
         unsafe {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -289,7 +307,6 @@ fn run_message_loop() -> windows::core::Result<()> {
     }
 
     // 훅 해제.
-    // SAFETY: kb_hook/mouse_hook 은 설치 시 얻은 유효한 HHOOK.
     unsafe {
         let _ = UnhookWindowsHookEx(kb_hook);
         let _ = UnhookWindowsHookEx(mouse_hook);
@@ -386,7 +403,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     // 2) 방향키 처리 — 키보드 snap. DOWN 만 삼키고 UP 은 통과(명시 처리 없음).
     let direction = vk_to_direction(vk);
     if let Some(dir) = direction {
-        if is_down && handle_direction_key(ctx, dir, vk) {
+        if is_down && handle_direction_key(ctx, dir) {
             // 삼킴 — 다음 훅으로 전달하지 않음.
             return LRESULT(1);
         }
@@ -408,62 +425,35 @@ fn vk_to_direction(vk: u32) -> Option<Direction> {
 }
 
 /// 방향키 DOWN 처리. 삼킬지 여부 반환.
-///
-/// 삼키는 조건 (캐시된 config 기반):
-/// - keyboard.enabled == true 이고
-/// - (throw modifier 조합이 모두 눌림) OR
-///   (override_win_snap && Win 눌림 && Alt 안 눌림)
-fn handle_direction_key(ctx: &HookContext, dir: Direction, _vk: u32) -> bool {
+fn handle_direction_key(ctx: &HookContext, dir: Direction) -> bool {
     if !CACHED_KB_ENABLED.load(Ordering::Relaxed) {
         return false;
     }
-
-    let mods_held = check_throw_modifiers();
-    let override_held = CACHED_OVERRIDE_WIN_SNAP.load(Ordering::Relaxed)
-        && win_pressed()
-        && !alt_pressed();
-
-    if !mods_held && !override_held {
+    if !check_throw_modifiers() {
         return false;
     }
-
     let (cx, cy) = current_cursor();
-    if let Err(e) = ctx.keyboard_service.on_direction_key(dir, cx, cy) {
-        eprintln!("키보드 snap 오류: {e}");
-    }
+    let _ = ctx.tx.send(HookMsg::DirectionKey { dir, cx, cy });
     true
 }
 
 // ────────────────────────────────────────────────────────────────────
-// throw modifier 상태 전이 (FancyZones 방식)
+// throw modifier 상태 전이
 // ────────────────────────────────────────────────────────────────────
 
-/// throw modifier 조합 전이를 검사해 메시지 펌프로 처리 위임.
-///
-/// LL 훅 콜백에서 직접 SnapService 호출(config 로드 + D2D 렌더링)을 하면
-/// LowLevelHooksTimeout(300ms)에 걸려 지연/해제된다. 대신 PostMessage 로
-/// 사용자 정의 메시지를 보내고 메시지 펌프에서 처리한다.
+/// throw modifier 조합 전이를 검사해 작업 스레드로 위임.
 fn update_throw_state(ctx: &HookContext) {
     let held = check_throw_modifiers();
     let was_active = throw_active();
 
     if held && !was_active {
-        // Idle → Held 전이.
         let (cx, cy) = current_cursor();
         set_throw(true, Some((cx, cy)));
-        // 메시지 펌프로 위임 — WM_USER+1 = throw pressed.
-        let hwnd = HWND(ctx.hwnd.load(Ordering::Relaxed));
-        unsafe {
-            PostMessageW(hwnd, WM_USER + 1, WPARAM(0), LPARAM(0));
-        }
+        let _ = ctx.tx.send(HookMsg::ThrowPressed { cx, cy });
     } else if !held && was_active {
-        // Held → Idle 전이. cancel=false (정상 release → snap 실행).
         set_throw(false, None);
-        // 메시지 펌프로 위임 — WM_USER+2 = throw released.
-        let hwnd = HWND(ctx.hwnd.load(Ordering::Relaxed));
-        unsafe {
-            PostMessageW(hwnd, WM_USER + 2, WPARAM(0), LPARAM(0));
-        }
+        let (cx, cy) = current_cursor();
+        let _ = ctx.tx.send(HookMsg::ThrowReleased { cx, cy });
     }
 }
 
@@ -549,18 +539,13 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 if let Some((ox, oy)) = throw_origin() {
                     let dx = (cx - ox) as f64;
                     let dy = (cy - oy) as f64;
-                    if let Err(e) = ctx.snap_service.on_mouse_moved(cx, cy, dx, dy) {
-                        eprintln!("throw on_mouse_moved 오류: {e}");
-                    }
+                    let _ = ctx.tx.send(HookMsg::MouseMoved { cx, cy, dx, dy });
                 }
             }
             WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
-                // 취소 — snap 실행 없이 throw 종료.
                 let (cx, cy) = (ms.pt.x, ms.pt.y);
                 set_throw(false, None);
-                if let Err(e) = ctx.snap_service.on_modifier_released(true, cx, cy) {
-                    eprintln!("throw on_modifier_released(cancel) 오류: {e}");
-                }
+                let _ = ctx.tx.send(HookMsg::ThrowCancel { cx, cy });
             }
             _ => {}
         }
