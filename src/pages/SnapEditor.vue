@@ -61,7 +61,6 @@ function scrollToRow(id: string) {
 
 // Nuxt UI 컴포넌트를 h() 안에서 참조하려면 resolveComponent 필요.
 const UButton = resolveComponent('UButton')
-const UBadge = resolveComponent('UBadge')
 const UDropdownMenu = resolveComponent('UDropdownMenu')
 
 function updateTarget(id: string, patch: Partial<SnapTarget>) {
@@ -88,16 +87,19 @@ function deleteTarget(id: string) {
   expanded.value = next
 }
 
-function addTarget(kind: 'area' | 'action') {
+function addTarget() {
   if (!store.draft) return
-  const id = kind === 'area' ? `area-${Date.now()}` : `action-${Date.now()}`
-  const name = kind === 'area' ? t('snapEditor.newArea') : t('snapEditor.newAction')
-  const target: SnapTarget = kind === 'area'
-    ? { kind: 'area', id, name, x_ratio: 0.1, y_ratio: 0.1, w_ratio: 0.3, h_ratio: 0.3 }
-    : { kind: 'action', id, name, action: 'Maximize' }
-  // 새 항목을 맨 위에 삽입 (사용자가 바로 볼 수 있도록)
+  const id = `area-${Date.now()}`
+  const target: SnapTarget = {
+    kind: 'area',
+    id,
+    name: t('snapEditor.newArea'),
+    x_ratio: 0.1,
+    y_ratio: 0.1,
+    w_ratio: 0.3,
+    h_ratio: 0.3,
+  }
   store.draft.snap.areas.unshift(target)
-  // 다른 확장은 닫고 새 항목만 확장
   expanded.value = { [id]: true }
 }
 
@@ -122,17 +124,6 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
     header: () => t('snapEditor.name'),
   },
   {
-    id: 'kind',
-    header: () => t('snapEditor.type'),
-    cell: ({ row }) =>
-      h(UBadge, {
-        label: row.original.kind === 'area' ? t('snapEditor.area') : t('snapEditor.action'),
-        color: row.original.kind === 'area' ? 'primary' : 'info',
-        variant: 'soft',
-        size: 'sm',
-      }),
-  },
-  {
     id: 'actions',
     header: '',
     cell: ({ row }) =>
@@ -155,14 +146,14 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
       <UDashboardNavbar :title="t('snapEditor.title')">
         <template #right>
           <div class="flex items-center gap-2">
-            <UDropdownMenu
-              :items="[
-                { label: t('snapEditor.area'), icon: 'i-lucide-square', onSelect: () => addTarget('area') },
-                { label: t('snapEditor.action'), icon: 'i-lucide-zap', onSelect: () => addTarget('action') },
-              ]"
-            >
-              <UButton icon="i-lucide-plus" color="primary" variant="soft" size="sm" :label="t('snapEditor.addTarget')" />
-            </UDropdownMenu>
+            <UButton
+              icon="i-lucide-plus"
+              color="primary"
+              variant="soft"
+              size="sm"
+              :label="t('snapEditor.addTarget')"
+              @click="addTarget"
+            />
             <SaveActions
               v-if="store.draft"
               :dirty="store.isDirty"
