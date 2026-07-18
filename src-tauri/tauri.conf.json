@@ -40,7 +40,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWRTY0IyxqHc6Tn1xzJumqdOJw7SEeA8+jIp+tr2Fxu1VP1PIVIAABAAAAAAAAAAAAIAAAAA6oivl5J1p1XJPnjOJDHp706zRWGT+UsLR5fvfWMA+AS4hIpxgtezlXZzARlmnmI95/2AlYMrZf6YsGBCY3PHsHp7gqbqs4PmS/j/OaF0ZjNgsGYjGkh5DLs290sLBC9C0laNZGGE9po=",
+      "pubkey": "UldSVFkwSXl4cUhjNlRuMXh6SnVtcWRPSnc3U0VlQTgraklwK3RyMkZ4dTFWUDFQSVZJQUFCQUFBQUFBQUFBQUFBSUFBQUFBNm9pdmw1SjFwMVhKUG5qT0pESHA3MDZ6UldHVCtVc0xSNWZ2ZldNQStBUzRoSXB4Z3RlemxYWnpBUmxtbm1JOTUvMkFsWU1yWmY2WXNHQkNZM1BIc0hwN2dxYnFzNFBtUy9qL09hRjBaak5nc0dZakdraDVETHMyOTBzTEJDOUMwbGFOWkdHRTlwbz0=",
       "endpoints": [
         "https://github.com/troublecoder/rectangle-win/releases/latest/download/latest.json"
       ]
