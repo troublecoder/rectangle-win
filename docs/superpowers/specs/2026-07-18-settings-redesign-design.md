@@ -262,8 +262,8 @@ UApp
 | 섹션 | 필드 | 컴포넌트 |
 |---|---|---|
 | 핫키 (Trigger) | `throw.trigger_modifiers: string[]` | `UHotkeyInput` (커스텀, flat) |
-| Long Throw | `long_throw_enabled` (USwitch), `long_throw_distance` (USlider, 100~1000 step 50) | enabled일 때만 노출 |
-| Sector 매핑 | `throw.mapping`, `throw.long_throw_mapping` | `UCard`로 감싼 매핑 표 (데이터 영역, 여기로 이동, 8섹터 고정) |
+| Long Throw | `throw.long_throw.enabled` (USwitch), `throw.long_throw.distance` (USlider, 100~1000 step 50) | enabled일 때만 노출 |
+| Sector 매핑 | `throw.mapping`, `throw.long_throw.mapping` | `UCard`로 감싼 매핑 표 (데이터 영역, 여기로 이동, 8섹터 고정) |
 
 **UHotkeyInput 컴포넌트 동작**:
 1. 비활성 상태: 현재 modifier 조합 표시 (예: `Win + Alt` 배지).
@@ -317,9 +317,11 @@ UApp
 
 | 섹션 | 필드 | 컴포넌트 |
 |---|---|---|
-| 레티클 | `overlay.reticle_style` | USelect (pie / crosshair / minimal) |
-| 커서 표시기 | `cursor_indicator` (USwitch), `cursor_color` (UColorPicker), `cursor_radius` (USlider 5~50), `cursor_opacity` (USlider 0.1~1) | enabled일 때만 하위 노출 |
-| Snap Preview | `overlay.snap_preview` (USwitch) + `preview_colors` 색상 필드 (`ColorLockField`) | enabled일 때만 하위 노출 |
+| 커서 표시기 | `overlay.cursor.indicator` (USwitch), `overlay.cursor.color` (UColorPicker), `overlay.cursor.radius` (USlider 5~50), `overlay.cursor.opacity` (USlider 0.1~1) | enabled일 때만 하위 노출 |
+| Snap Preview | `overlay.snap_preview.enabled` (USwitch) + `overlay.snap_preview.colors` (`ColorLockField`) | enabled일 때만 하위 노출 |
+
+> `reticle_style` 섹션 제거 — 데드 필드(그리는 코드 없음)이므로 스키마와
+> UI에서 모두 제거. Display 페이지는 위 2개 섹션만.
 
 **Snap Preview 색상 UX (`ColorLockField` 컴포넌트)**:
 ```
@@ -359,33 +361,80 @@ Long Throw 색상  [UColorPicker] ┘
 **제거**:
 - `sector_count: u8` → 8 상수 고정.
 - `sector_highlight_color: String`.
+- `reticle_style: String` → **데드 필드** (그리는 코드 없음, UI에만 존재).
+  win32_overlay draw_scene은 cursor 원 + snap_preview 사각형만 그림.
 
-**추가**:
+**계층화 원칙**: 강결합 필드(항상 함께 의미를 갖는 3개 이상)는 객체로 묶는다.
+단일 필드나 독립적 필드는 평면 유지. legacy 호환성은 무시 (깔끔한 제거).
+
+**재구성**:
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CursorConfig {
+    pub indicator: bool,
+    pub radius: u32,
+    pub color: String,
+    pub opacity: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreviewColors {
     pub throw_color: String,
     pub long_throw_color: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SnapPreviewConfig {
+    pub enabled: bool,
+    pub colors: PreviewColors,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OverlayConfig {
-    pub reticle_style: String,
-    pub cursor_indicator: bool,
-    pub cursor_radius: i32,
-    pub cursor_color: String,
-    pub cursor_opacity: f64,
-    pub snap_preview: bool,
-    pub preview_colors: PreviewColors,  // 신규
+    pub cursor: CursorConfig,            // 객체화 (4개 강결합 필드)
+    pub snap_preview: SnapPreviewConfig, // 객체화 (enabled + colors 강결합)
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self {
+            cursor: CursorConfig {
+                indicator: true,
+                radius: 18,
+                color: "#E53935".to_string(),
+                opacity: 0.5,
+            },
+            snap_preview: SnapPreviewConfig {
+                enabled: true,
+                colors: PreviewColors {
+                    throw_color: "#3B82F6".to_string(),
+                    long_throw_color: "#3B82F6".to_string(), // 잠금 상태 기본 — 같은 색
+                },
+            },
+        }
+    }
 }
 ```
 
-`Default` impl:
+**ThrowConfig 계층화** (long_throw 3개 필드 묶기):
 ```rust
-preview_colors: PreviewColors {
-    throw_color: "#3B82F6".to_string(),
-    long_throw_color: "#3B82F6".to_string(),  // 잠금 상태 기본 — 같은 색
-},
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LongThrowConfig {
+    pub enabled: bool,
+    pub distance: u32,
+    pub mapping: SectorMap,
+}
+
+pub struct ThrowConfig {
+    pub trigger_modifiers: Vec<String>,
+    pub mapping: SectorMap,            // 기본 throw 매핑 (평면 — 단일 필드)
+    pub long_throw: LongThrowConfig,   // 객체화 (3개 강결합 필드)
+}
 ```
+
+> `GeneralConfig`는 평면 유지 — `launch_at_login`/`start_minimized`는
+> 독립적(로그인 시작해도 최소화 아닐 수 있음), `show_in_tray`/`language`/
+> `snap_margin`도 단일 필드. 강결합 그룹 없음.
 
 ### `win32_overlay.rs` `draw_scene` 분기
 
@@ -394,11 +443,15 @@ preview_colors: PreviewColors {
 // 기존: active_sector.is_some() → sector_highlight_color, else cursor_color
 // 신규: throw 거리 기반 색상 분기
 let color_hex = if state.is_long_throw {
-    &cfg.preview_colors.long_throw_color
+    &cfg.snap_preview.colors.long_throw_color
 } else {
-    &cfg.preview_colors.throw_color
+    &cfg.snap_preview.colors.throw_color
 };
 ```
+
+**cursor 컬러 참조도 업데이트**: `cfg.cursor_color` → `cfg.cursor.color`,
+`cfg.cursor_radius` → `cfg.cursor.radius` 등. snap_service/keyboard_service
+호출부 모두 새 경로 사용.
 
 `OverlayDrawState`에 `is_long_throw: bool` 필드 추가 또는 snap_service가
 선택된 색상을 overlay에 직접 전달. long throw 판단은 이미
@@ -435,23 +488,49 @@ pub struct KeyboardConfig {
 ## 프론트엔드 스키마 변경 (`src/entities/config.ts`)
 
 ```ts
-// 제거: overlay.sector_count, overlay.sector_highlight_color
+// 제거: overlay.sector_count, overlay.sector_highlight_color, overlay.reticle_style
 // 제거: keyboard.cycle_timeout_ms
+// 계층화: cursor_*, snap_preview + preview_colors → 객체
+
+export const cursorConfigSchema = z.object({
+  indicator: z.boolean(),
+  radius: z.number().int(),
+  color: z.string(),
+  opacity: z.number(),
+})
+export type CursorConfig = z.infer<typeof cursorConfigSchema>
 
 export const previewColorsSchema = z.object({
   throw_color: z.string(),
   long_throw_color: z.string(),
 })
+export type PreviewColors = z.infer<typeof previewColorsSchema>
+
+export const snapPreviewConfigSchema = z.object({
+  enabled: z.boolean(),
+  colors: previewColorsSchema,
+})
+export type SnapPreviewConfig = z.infer<typeof snapPreviewConfigSchema>
 
 export const overlayConfigSchema = z.object({
-  reticle_style: z.string(),
-  cursor_indicator: z.boolean(),
-  cursor_radius: z.number().int(),
-  cursor_color: z.string(),
-  cursor_opacity: z.number(),
-  snap_preview: z.boolean(),
-  preview_colors: previewColorsSchema,  // 신규
+  cursor: cursorConfigSchema,
+  snap_preview: snapPreviewConfigSchema,
 })
+export type OverlayConfig = z.infer<typeof overlayConfigSchema>
+
+export const longThrowConfigSchema = z.object({
+  enabled: z.boolean(),
+  distance: z.number().int(),
+  mapping: sectorMapSchema,
+})
+export type LongThrowConfig = z.infer<typeof longThrowConfigSchema>
+
+export const throwConfigSchema = z.object({
+  trigger_modifiers: z.array(z.string()),
+  mapping: sectorMapSchema,
+  long_throw: longThrowConfigSchema,
+})
+export type ThrowConfig = z.infer<typeof throwConfigSchema>
 
 export const keyboardConfigSchema = z.object({
   enabled: z.boolean(),
