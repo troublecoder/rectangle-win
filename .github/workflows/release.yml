@@ -50,6 +50,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Rectangle Win ${{ github.ref_name }}'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true
