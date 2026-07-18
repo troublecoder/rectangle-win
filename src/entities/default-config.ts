@@ -30,24 +30,40 @@ export const defaultConfig: Config = {
   },
   throw: {
     trigger_modifiers: ['Win', 'Alt'],
-    long_throw_enabled: true,
-    long_throw_distance: 400,
-    mapping: { '0': 'right-half', '2': 'bottom-half', '4': 'left-half', '6': 'top-half' },
-    long_throw_mapping: { '0': 'third-right', '2': 'maximize', '4': 'third-left', '6': 'maximize-height' },
+    // 기본 매핑: 우측 방향은 우측 2/3, 좌측 방향은 좌측 1/3. ↓=restore, ↑=maximize.
+    mapping: {
+      '0': 'two-thirds-right',
+      '1': 'sixth-br',
+      '2': 'restore',
+      '3': 'sixth-bl',
+      '4': 'third-left',
+      '5': 'sixth-tl',
+      '6': 'maximize',
+      '7': 'sixth-tr',
+    },
+    long_throw: {
+      enabled: true,
+      distance: 400,
+      mapping: {},
+    },
   },
   keyboard: {
     enabled: true,
-    cycle_timeout_ms: 1500,
   },
   overlay: {
-    reticle_style: 'pie',
-    cursor_indicator: true,
-    cursor_radius: 18,
-    cursor_color: '#E53935',
-    cursor_opacity: 0.5,
-    sector_highlight_color: '#3B82F6',
-    sector_count: 8,
-    snap_preview: true,
+    cursor: {
+      indicator: true,
+      radius: 18,
+      color: '#E53935',
+      opacity: 0.5,
+    },
+    snap_preview: {
+      enabled: true,
+      colors: {
+        throw_color: '#3B82F6',
+        long_throw_color: '#3B82F6',
+      },
+    },
   },
   update: {
     enabled: true,

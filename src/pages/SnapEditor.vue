@@ -1,52 +1,72 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { h, onMounted, ref, computed, watch, nextTick, resolveComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { ColumnDef } from '@tanstack/vue-table'
 import { useConfigStore } from '@/features/config-store'
-import * as api from '@/features/api'
-import PageHeader from '@/components/PageHeader.vue'
-import SaveBar from '@/components/SaveBar.vue'
+import SaveActions from '@/components/SaveActions.vue'
 import SnapCanvas from '@/components/SnapCanvas.vue'
 import SnapProperties from '@/components/SnapProperties.vue'
-import SectorMapping from '@/components/SectorMapping.vue'
-import type { SnapTarget, SnapPresetName } from '@/entities/config'
+import type { SnapTarget } from '@/entities/config'
 
 const { t } = useI18n()
 const store = useConfigStore()
+// 테이블 루트를 참조하여 expand 시 해당 행으로 스크롤
+// UTable ref는 컴포넌트 인스턴스이므로 $el로 실제 DOM에 접근
+const tableRef = ref<any>(null)
 
 onMounted(() => store.load())
 
-const selectedId = ref<string | null>(null)
-const activeTab = ref(0)
+// TanStack ExpandedState는 Record<string, boolean>. ref<string[]>가 아님에 주의.
+// Accordion 동작: 한 번에 하나의 행만 확장. 새로운 행을 확장하면 기존 행은 닫힌다.
+const expanded = ref<Record<string, boolean>>({})
 
-const presetItems = computed(() => [
-  { label: t('snapEditor.presetMinimal'), value: 'minimal' },
-  { label: t('snapEditor.presetStandard'), value: 'standard' },
-  { label: t('snapEditor.presetExtended'), value: 'extended' },
-  { label: t('snapEditor.presetFull'), value: 'full' },
-  { label: t('snapEditor.presetPortrait'), value: 'portrait' },
-])
+// 가장 최근에 확장된 행 id (스크롤용)
+let lastExpandedId: string | null = null
 
-const tabItems = computed(() => [
-  { label: t('snapEditor.tabs.areas'), slot: 'areas', icon: 'i-lucide-layout-grid' },
-  { label: t('snapEditor.tabs.sectorMapping'), slot: 'mapping', icon: 'i-lucide-pie-chart' },
-])
+watch(expanded, (val) => {
+  const openIds = Object.keys(val).filter((k) => val[k])
+  if (openIds.length > 1) {
+    // 가장 최근에 열린 하나만 남기고 닫기
+    expanded.value = { [openIds[openIds.length - 1]]: true }
+    return
+  }
+  const currentId = openIds[0] ?? null
+  if (currentId && currentId !== lastExpandedId) {
+    lastExpandedId = currentId
+    // expand 렌더링 완료 후 해당 행으로 스크롤
+    nextTick(() => scrollToRow(currentId))
+  } else if (!currentId) {
+    lastExpandedId = null
+  }
+}, { deep: true })
 
-const selectedArea = computed(() => {
-  const t = store.draft?.snap.areas.find(a => a.id === selectedId.value) ?? null
-  return t && t.kind === 'area' ? t : null
-})
-
-const selectedTarget = computed(() =>
-  store.draft?.snap.areas.find(a => a.id === selectedId.value) ?? null,
-)
-
-function selectTarget(id: string) {
-  selectedId.value = id
+// 테이블 tbody 내에서 해당 id의 행(tr)을 찾아 scrollIntoView.
+// UTable은 tr에 data 식별자를 노출하지 않으므로, 행 인덱스 기반으로 탐색.
+function scrollToRow(id: string) {
+  if (!store.draft || !tableRef.value) return
+  const rowIndex = store.draft.snap.areas.findIndex((a) => a.id === id)
+  if (rowIndex < 0) return
+  // UTable ref에서 실제 DOM 추출 (컴포넌트 인스턴스의 $el 또는 자기 자신)
+  const root = (tableRef.value?.$el ?? tableRef.value) as HTMLElement | null
+  if (!root) return
+  const tbody = root.querySelector('tbody')
+  if (!tbody) return
+  // 데이터 행 tr (aria-hidden placeholder 제외). 확장 콘텐츠 tr은 데이터 행 바로 뒤.
+  const rows = Array.from(tbody.querySelectorAll(':scope > tr:not([aria-hidden="true"])'))
+  const targetRow = rows[rowIndex] as HTMLElement | undefined
+  if (targetRow) {
+    targetRow.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 }
+
+// Nuxt UI 컴포넌트를 h() 안에서 참조하려면 resolveComponent 필요.
+const UButton = resolveComponent('UButton')
+const UBadge = resolveComponent('UBadge')
+const UDropdownMenu = resolveComponent('UDropdownMenu')
 
 function updateTarget(id: string, patch: Partial<SnapTarget>) {
   if (!store.draft) return
-  const idx = store.draft.snap.areas.findIndex(a => a.id === id)
+  const idx = store.draft.snap.areas.findIndex((a) => a.id === id)
   if (idx >= 0) {
     store.draft.snap.areas[idx] = { ...store.draft.snap.areas[idx], ...patch } as SnapTarget
   }
@@ -54,143 +74,152 @@ function updateTarget(id: string, patch: Partial<SnapTarget>) {
 
 function deleteTarget(id: string) {
   if (!store.draft) return
-  store.draft.snap.areas = store.draft.snap.areas.filter(a => a.id !== id)
-  // 매핑에서도 제거
-  for (const mapKey of ['mapping', 'long_throw_mapping'] as const) {
-    const map = store.draft.throw[mapKey]
+  store.draft.snap.areas = store.draft.snap.areas.filter((a) => a.id !== id)
+  // Throw 매핑에서도 해당 id 제거 (고립 참조 방지).
+  // throw.mapping 과 throw.long_throw.mapping 모두 정리.
+  for (const map of [store.draft.throw.mapping, store.draft.throw.long_throw.mapping]) {
     for (const [sector, targetId] of Object.entries(map)) {
       if (targetId === id) delete map[sector]
     }
   }
-  selectedId.value = null
+  // expanded 상태에서도 제거 (TanStack ExpandedState는 Record<string, boolean>)
+  const next = { ...expanded.value }
+  delete next[id]
+  expanded.value = next
 }
 
 function addTarget(kind: 'area' | 'action') {
   if (!store.draft) return
   const id = kind === 'area' ? `area-${Date.now()}` : `action-${Date.now()}`
-  const name = kind === 'area' ? 'New Area' : 'New Action'
+  const name = kind === 'area' ? t('snapEditor.newArea') : t('snapEditor.newAction')
   const target: SnapTarget = kind === 'area'
     ? { kind: 'area', id, name, x_ratio: 0.1, y_ratio: 0.1, w_ratio: 0.3, h_ratio: 0.3 }
     : { kind: 'action', id, name, action: 'Maximize' }
-  store.draft.snap.areas.push(target)
-  selectedId.value = id
+  // 새 항목을 맨 위에 삽입 (사용자가 바로 볼 수 있도록)
+  store.draft.snap.areas.unshift(target)
+  // 다른 확장은 닫고 새 항목만 확장
+  expanded.value = { [id]: true }
 }
 
-async function onSave() {
-  console.log('[SnapEditor] onSave 호출')
-  await store.save()
-}
-
-async function applyPreset(presetName: string) {
-  if (!presetName) return
-  try {
-    const config = await api.applyPreset(presetName as SnapPresetName)
-    if (store.saved) {
-      store.saved = config
-      // draft도 snap 부분만 갱신
-      if (store.draft) {
-        store.draft.snap = config.snap
-      }
-    }
-  } catch {
-    // 브라우저 환경에서는 무시
-  }
-}
+const columns = computed<ColumnDef<SnapTarget>[]>(() => [
+  {
+    id: 'expand',
+    header: '',
+    cell: ({ row }) =>
+      h(
+        UButton,
+        {
+          icon: row.getIsExpanded() ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right',
+          color: 'neutral',
+          variant: 'ghost',
+          size: 'xs',
+          onClick: () => row.toggleExpanded(),
+        },
+      ),
+  },
+  {
+    accessorKey: 'name',
+    header: () => t('snapEditor.name'),
+  },
+  {
+    id: 'kind',
+    header: () => t('snapEditor.type'),
+    cell: ({ row }) =>
+      h(UBadge, {
+        label: row.original.kind === 'area' ? t('snapEditor.area') : t('snapEditor.action'),
+        color: row.original.kind === 'area' ? 'primary' : 'info',
+        variant: 'soft',
+        size: 'sm',
+      }),
+  },
+  {
+    id: 'actions',
+    header: '',
+    cell: ({ row }) =>
+      h(UDropdownMenu, {
+        items: [
+          {
+            label: t('common.delete'),
+            icon: 'i-lucide-trash-2',
+            onSelect: () => deleteTarget(row.original.id),
+          },
+        ],
+      }, () => h(UButton, { icon: 'i-lucide-more-horizontal', color: 'neutral', variant: 'ghost', size: 'xs' })),
+  },
+])
 </script>
 
 <template>
-  <div class="max-w-5xl space-y-6">
-    <div class="flex items-start justify-between">
-      <PageHeader :title="t('snapEditor.title')" :description="t('snapEditor.description')" />
-      <!-- Preset + Import/Export -->
-      <div class="flex items-center gap-2">
-        <USelect
-          :model-value="store.draft?.snap.active_preset"
-          :items="presetItems"
-          value-key="value"
-          size="sm"
-          :placeholder="t('snapEditor.preset')"
-          @update:model-value="applyPreset($event as string)"
-        />
-        <UButton icon="i-lucide-download" size="sm" color="neutral" variant="ghost" :label="t('snapEditor.import')" />
-        <UButton icon="i-lucide-upload" size="sm" color="neutral" variant="ghost" :label="t('snapEditor.export')" />
-      </div>
-    </div>
-
-    <template v-if="store.draft">
-      <UTabs v-model="activeTab" :items="tabItems" class="w-full">
-
-        <!-- Tab 1: Snap Areas (3패널) -->
-        <template #areas>
-          <div class="grid grid-cols-[200px_1fr_240px] gap-4 py-4">
-            <!-- 좌측: 타겟 목록 -->
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <h4 class="text-sm font-medium">{{ t('snapEditor.targets') }}</h4>
-                <UDropdownMenu :items="[
-                  { label: t('snapEditor.area'), icon: 'i-lucide-square', onSelect: () => addTarget('area') },
-                  { label: t('snapEditor.action'), icon: 'i-lucide-zap', onSelect: () => addTarget('action') },
-                ]">
-                  <UButton icon="i-lucide-plus" size="xs" color="primary" variant="soft" />
-                </UDropdownMenu>
-              </div>
-              <div class="space-y-1">
-                <button
-                  v-for="target in store.draft.snap.areas"
-                  :key="target.id"
-                  class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors"
-                  :class="selectedId === target.id
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-elevated/50'"
-                  @click="selectTarget(target.id)"
-                >
-                  <UIcon
-                    :name="target.kind === 'area' ? 'i-lucide-square' : 'i-lucide-zap'"
-                    class="size-4 shrink-0"
-                  />
-                  <span class="truncate">{{ target.name }}</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- 중앙: vue-konva 캔버스 (선택된 영역만 표시) -->
-            <SnapCanvas
-              :area="selectedArea"
-              :selected-id="selectedId"
-              @update="(id, patch) => updateTarget(id, patch)"
-            />
-
-            <!-- 우측: 속성 패널 -->
-            <UCard variant="subtle">
-              <SnapProperties
-                :target="selectedTarget"
-                @update="(patch) => selectedId && updateTarget(selectedId, patch)"
-                @delete="selectedId && deleteTarget(selectedId)"
-              />
-            </UCard>
-          </div>
-        </template>
-
-        <!-- Tab 2: Sector Mapping -->
-        <template #mapping>
-          <div class="py-4">
-            <SectorMapping
-              :sector-count="store.draft.overlay.sector_count"
-              :targets="store.draft.snap.areas"
-              :mapping="store.draft.throw.mapping"
-              :long-throw-mapping="store.draft.throw.long_throw_mapping"
-              @update:mapping="store.draft!.throw.mapping = $event"
-              @update:long-throw-mapping="store.draft!.throw.long_throw_mapping = $event"
+  <UDashboardPanel>
+    <template #header>
+      <UDashboardNavbar :title="t('snapEditor.title')">
+        <template #right>
+          <div class="flex items-center gap-2">
+            <UDropdownMenu
+              :items="[
+                { label: t('snapEditor.area'), icon: 'i-lucide-square', onSelect: () => addTarget('area') },
+                { label: t('snapEditor.action'), icon: 'i-lucide-zap', onSelect: () => addTarget('action') },
+              ]"
+            >
+              <UButton icon="i-lucide-plus" color="primary" variant="soft" size="sm" :label="t('snapEditor.addTarget')" />
+            </UDropdownMenu>
+            <SaveActions
+              v-if="store.draft"
+              :dirty="store.isDirty"
+              :saving="store.saving"
+              @save="store.save()"
+              @reset="store.reset()"
             />
           </div>
         </template>
-      </UTabs>
-
-      <SaveBar :dirty="store.isDirty" :saving="store.saving" @save="onSave" @reset="store.reset()" />
+      </UDashboardNavbar>
     </template>
 
-    <div v-else-if="store.loading" class="py-8 text-center text-muted">
-      <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
-    </div>
-  </div>
+    <template #body>
+      <UContainer class="py-8">
+        <div v-if="store.loading" class="py-8 text-center text-muted">
+          <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
+        </div>
+
+        <UAlert
+          v-else-if="store.error"
+          color="error"
+          variant="soft"
+          icon="i-lucide-alert-circle"
+          :title="store.error"
+        />
+
+        <template v-else-if="store.draft">
+          <UCard variant="subtle">
+            <UTable
+              ref="tableRef"
+              :data="store.draft.snap.areas"
+              :columns="columns"
+              v-model:expanded="expanded"
+              :get-row-id="(row: SnapTarget) => row.id"
+              class="w-full"
+            >
+              <!-- 인라인 템플릿 방식: h() 반환값을 {{ }} 로 보간하면 VNode가 텍스트로 렌더되므로
+                   직접 컴포넌트를 배치한다. -->
+              <template #expanded="{ row }">
+                <div class="grid gap-6 px-4 py-4 lg:grid-cols-[1fr_320px]">
+                  <div class="space-y-4">
+                    <SnapProperties
+                      :target="row.original"
+                      @update="(patch) => updateTarget(row.original.id, patch)"
+                    />
+                  </div>
+                  <SnapCanvas
+                    v-if="row.original.kind === 'area'"
+                    :area="row.original"
+                    @update="(id, patch) => updateTarget(id, patch)"
+                  />
+                </div>
+              </template>
+            </UTable>
+          </UCard>
+        </template>
+      </UContainer>
+    </template>
+  </UDashboardPanel>
 </template>

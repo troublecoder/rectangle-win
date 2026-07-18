@@ -53,30 +53,25 @@ impl TomlConfigStore {
         let contents = std::fs::read_to_string(&self.path).map_err(|e| {
             ApplicationError::WindowOperation(format!("failed to read config: {}", e))
         })?;
-        let mut config: Config = toml::from_str(&contents).map_err(|e| {
+        let config: Config = toml::from_str(&contents).map_err(|e| {
             ApplicationError::WindowOperation(format!("failed to parse config: {}", e))
         })?;
 
-        // snap 영역이 비어 있으면(이전 버전 config 등) 활성 프리셋으로 채운다.
-        if config.snap.areas.is_empty() {
-            config = Self::config_with_defaults();
-            self.write_to_disk(&config)?;
-        }
         Ok(config)
     }
 
-    /// 기본 Config 에 extended 프리셋 + 8섹터 throw 매핑을 적용해 반환.
+    /// 기본 Config 에 full 프리셋 + 8섹터 throw 매핑을 적용해 반환.
     ///
-    /// extended 프리셋을 사용하는 이유: 키보드 ↑/↓ 액션 순환 체인이
-    /// almost-maximize / center(action) / maximize-height 등을 참조하며,
-    /// 이들은 extended 프리셋에만 존재한다. standard 프리셋으로는 snap target 을
-    /// 찾지 못해 "target not found" 에러가 발생한다.
+    /// 기본 매핑 컨셉: 좌우 비대칭.
+    ///   - 오른쪽 방향(→/↘/↗) → 화면 우측 2/3 영역군 (two-thirds-right + 우측 1/6 분할)
+    ///   - 왼쪽 방향(←/↙/↖) → 화면 좌측 1/3 영역군 (third-left + 좌측 1/6 분할)
+    ///   - ↓ Restore, ↑ Maximize (세로 방향은 창 상태 토글)
     fn config_with_defaults() -> Config {
         use crate::domain::model::SectorMap;
         use crate::domain::presets::SnapPreset;
 
         let mut config = Config::default();
-        // extended 프리셋 사용 — chain 기본값이 참조하는 모든 target 포함.
+        // full 프리셋 — sixth/two-thirds 등 모든 영역 포함.
         config.snap.active_preset = "full".to_string();
         config.snap.areas = SnapPreset::Full.targets();
 
@@ -85,14 +80,14 @@ impl TomlConfigStore {
         //   0=오른쪽, 1=오른쪽아래, 2=아래, 3=왼쪽아래,
         //   4=왼쪽, 5=왼쪽위, 6=위, 7=오른쪽위
         let mut mapping = SectorMap::new();
-        mapping.insert(0, "right-half".to_string());      // → 우 — 우측절반
-        mapping.insert(1, "quarter-br".to_string());      // ↘ 우하 — 우하분기
-        mapping.insert(2, "bottom-half".to_string());     // ↓ 아래 — 하단절반
-        mapping.insert(3, "quarter-bl".to_string());      // ↙ 좌하 — 좌하분기
-        mapping.insert(4, "left-half".to_string());       // ← 좌 — 좌측절반
-        mapping.insert(5, "quarter-tl".to_string());      // ↖ 좌상 — 좌상분기
-        mapping.insert(6, "maximize".to_string());        // ↑ 위 — 최대화
-        mapping.insert(7, "quarter-tr".to_string());      // ↗ 우상 — 우상분기
+        mapping.insert(0, "two-thirds-right".to_string()); // → 우 — 우측 2/3
+        mapping.insert(1, "sixth-br".to_string());         // ↘ 우하 — 우하 1/6
+        mapping.insert(2, "restore".to_string());          // ↓ 아래 — 복원
+        mapping.insert(3, "sixth-bl".to_string());         // ↙ 좌하 — 좌하 1/6
+        mapping.insert(4, "third-left".to_string());       // ← 좌 — 좌측 1/3
+        mapping.insert(5, "sixth-tl".to_string());         // ↖ 좌상 — 좌상 1/6
+        mapping.insert(6, "maximize".to_string());         // ↑ 위 — 최대화
+        mapping.insert(7, "sixth-tr".to_string());         // ↗ 우상 — 우상 1/6
         config.throw.mapping = mapping;
 
         config

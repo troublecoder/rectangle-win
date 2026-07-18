@@ -52,7 +52,7 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, DIB_RGB_COLORS, HBITMAP, HDC,
-    HGDIOBJ, SelectObject,
+    SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, ShowWindow,
@@ -71,14 +71,10 @@ use crate::domain::model::OverlayConfig;
 #[derive(Default)]
 struct OverlayDrawState {
     visible: bool,
-    #[allow(dead_code)]
     center: Option<(i32, i32)>,
-    #[allow(dead_code)]
-    sector_count: u8,
     active_sector: Option<u8>,
     snap_preview: Option<(i32, i32, i32, i32)>,
-    #[allow(dead_code)]
-    cursor: Option<(i32, i32)>,
+    is_long_throw: bool,
 }
 
 /// WS_EX_LAYERED + UpdateLayeredWindow 기반 오버레이.
@@ -107,11 +103,7 @@ pub struct Win32LayeredOverlay {
 struct OverlayResources {
     hwnd: HWND,
     hdc_mem: HDC,
-    /// 이전 비트맵(기본 1x1 모노). DeleteObject 로 정리용 보관.
-    _previous_bmp: HGDIOBJ,
     dc_render_target: ID2D1DCRenderTarget,
-    #[allow(dead_code)]
-    d2d_factory: ID2D1Factory1,
     brush: ID2D1SolidColorBrush,
     /// 점선(대시) 사각형용 stroke style (snap preview).
     dash_style: ID2D1StrokeStyle,
@@ -185,7 +177,7 @@ impl Win32LayeredOverlay {
             unsafe { d2d_factory.CreateDCRenderTarget(&rt_props)? };
 
         // 5. 32bpp DIB section + 메모리 DC 생성 후 DC render target 에 바인딩.
-        let (hdc_mem, hbitmap, previous_bmp) = Self::create_dib(init_w, init_h)?;
+        let (hdc_mem, hbitmap) = Self::create_dib(init_w, init_h)?;
         let bind_rect = RECT {
             left: 0,
             top: 0,
@@ -234,9 +226,7 @@ impl Win32LayeredOverlay {
         Ok(OverlayResources {
             hwnd,
             hdc_mem,
-            _previous_bmp: previous_bmp,
             dc_render_target,
-            d2d_factory,
             brush,
             dash_style,
             width: init_w,
@@ -245,12 +235,8 @@ impl Win32LayeredOverlay {
     }
 
     /// 32bpp DIB section + 메모리 DC 생성.
-    /// 반환: (메모리 DC, DIB HBITMAP, SelectObject 로 얻은 이전 객체).
-    /// 호출자는 크기 변경 시 이전 DIB 를 DeleteObject 해야 한다.
-    fn create_dib(
-        w: i32,
-        h: i32,
-    ) -> windows::core::Result<(HDC, HBITMAP, HGDIOBJ)> {
+    /// 반환: (메모리 DC, DIB HBITMAP).
+    fn create_dib(w: i32, h: i32) -> windows::core::Result<(HDC, HBITMAP)> {
         let w = w.max(1);
         let h = h.max(1);
         let bmi = BITMAPINFO {
@@ -280,9 +266,9 @@ impl Win32LayeredOverlay {
         let hbitmap: HBITMAP = unsafe {
             CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?
         };
-        // DIB 를 메모리 DC 에 선택. 이전 객체는 복구/정리용으로 보관.
-        let previous_bmp = unsafe { SelectObject(hdc_mem, hbitmap) };
-        Ok((hdc_mem, hbitmap, previous_bmp))
+        // DIB 를 메모리 DC 에 선택. 이전 객체는 더 이상 복구/정리에 사용되지 않으므로 무시.
+        let _previous_bmp = unsafe { SelectObject(hdc_mem, hbitmap) };
+        Ok((hdc_mem, hbitmap))
     }
 
     /// 오버레이 창 생성.
@@ -368,14 +354,15 @@ impl Win32LayeredOverlay {
 
     /// 실제 장면 그리기 — snap 미리보기 점선 사각형만 그린다.
     ///
-    /// 더 이상 커서 점/원/레티클 마커를 그리지 않는다. 색상은 `active_sector` 의
-    /// 유무에 따라 자동으로 전환된다 (Option 2):
-    /// - `active_sector == None` (lock-on, 현재 창): `cursor_color` (RED #E53935)
-    /// - `active_sector == Some(_)` (throw target): `sector_highlight_color` (BLUE #3B82F6)
+    /// 더 이상 커서 점/원/레티클 마커를 그리지 않는다. 색상은 `is_long_throw` 에
+    /// 따라 자동으로 전환된다:
+    /// - `is_long_throw == false` (일반 throw target): `colors.throw_color` (BLUE #3B82F6)
+    /// - `is_long_throw == true` (long throw target): `colors.long_throw_color`
     ///
     /// 호출 패턴:
-    /// - lock-on: `show_snap_preview` 만 호출 (active_sector=None → RED)
-    /// - throw:   `highlight_sector` → `show_snap_preview` (active_sector=Some → BLUE)
+    /// - lock-on: `show_snap_preview` 만 호출 (is_long_throw=false → throw_color)
+    /// - throw:   `highlight_sector` → `show_snap_preview` (is_long_throw=false → throw_color)
+    /// - long throw: `highlight_sector` → `show_snap_preview(is_long_throw=true)` (long_throw_color)
     ///
     /// **좌표계:** 오버레이 창은 가상 데스크톱 전체 크기로 고정되므로
     ///snap preview 사각형은 가상 화면 절대 좌표 (sx, sy, sw, sh) 그대로 그린다.
@@ -400,13 +387,13 @@ impl Win32LayeredOverlay {
             }));
 
             // origin(락온 시 커서 위치)에 작은 원 표시 — 기준점 시각화.
-            if cfg.cursor_indicator {
+            if cfg.cursor.indicator {
                 if let Some((cx, cy)) = state.center {
-                    let origin_color = Self::parse_hex_color(&cfg.cursor_color);
+                    let origin_color = Self::parse_hex_color(&cfg.cursor.color);
                     let mut c = origin_color;
-                    c.a = cfg.cursor_opacity as f32;
+                    c.a = cfg.cursor.opacity as f32;
                     res.brush.SetColor(&c);
-                    let r = cfg.cursor_radius as f32;
+                    let r = cfg.cursor.radius as f32;
                     let ellipse = D2D1_ELLIPSE {
                         point: D2D_POINT_2F { x: cx as f32, y: cy as f32 },
                         radiusX: r,
@@ -417,7 +404,7 @@ impl Win32LayeredOverlay {
             }
 
             // snap 미리보기 — 절대 좌표(가상 화면 좌표)로 그림.
-            if cfg.snap_preview {
+            if cfg.snap_preview.enabled {
                 if let Some((sx, sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
                         let rect = D2D_RECT_F {
@@ -426,12 +413,12 @@ impl Win32LayeredOverlay {
                             right: (sx + sw) as f32,
                             bottom: (sy + sh) as f32,
                         };
-                        // active_sector == None → lock-on (cursor_color, RED)
-                        // active_sector == Some → throw target (sector_highlight_color, BLUE)
-                        let color_hex = if state.active_sector.is_some() {
-                            &cfg.sector_highlight_color
+                        // is_long_throw == false → throw target (colors.throw_color, BLUE)
+                        // is_long_throw == true  → long throw target (colors.long_throw_color)
+                        let color_hex = if state.is_long_throw {
+                            &cfg.snap_preview.colors.long_throw_color
                         } else {
-                            &cfg.cursor_color
+                            &cfg.snap_preview.colors.throw_color
                         };
                         let base_color = Self::parse_hex_color(color_hex);
                         // 채우기 (알파 0.20).
@@ -523,25 +510,17 @@ impl Win32LayeredOverlay {
 impl OverlayController for Win32LayeredOverlay {
     /// Lock-on 진입 트리거 — 오버레이 창을 visible 상태로 전환한다.
     /// 더 이상 커서 점/레티클을 그리지 않는다. snap_preview 별도 표시 필요.
-    /// active_sector=None, snap_preview=None 으로 클리어하여 다음 show_snap_preview 가
-    /// RED(lock-on) 로 그려지도록 한다.
-    fn show_reticle(&self, center_x: i32, center_y: i32, sector_count: u8) -> AppResult<()> {
+    /// active_sector=None, snap_preview=None, is_long_throw=false 로 클리어하여
+    /// 다음 show_snap_preview 가 throw_color 로 그려지도록 한다.
+    fn show_reticle(&self, center_x: i32, center_y: i32) -> AppResult<()> {
         let mut state = self.state.lock().unwrap();
         state.visible = true;
         state.center = Some((center_x, center_y));
-        state.sector_count = sector_count;
         state.active_sector = None;
         state.snap_preview = None;
+        state.is_long_throw = false;
         drop(state);
         // redraw로 이전 프리뷰를 지우고 빈(투명) 상태로 만듦.
-        self.redraw();
-        Ok(())
-    }
-
-    fn update_cursor_indicator(&self, x: i32, y: i32) -> AppResult<()> {
-        let mut state = self.state.lock().unwrap();
-        state.cursor = Some((x, y));
-        drop(state);
         self.redraw();
         Ok(())
     }
@@ -554,9 +533,10 @@ impl OverlayController for Win32LayeredOverlay {
         Ok(())
     }
 
-    fn show_snap_preview(&self, x: i32, y: i32, width: i32, height: i32) -> AppResult<()> {
+    fn show_snap_preview(&self, x: i32, y: i32, width: i32, height: i32, is_long_throw: bool) -> AppResult<()> {
         let mut state = self.state.lock().unwrap();
         state.snap_preview = Some((x, y, width, height));
+        state.is_long_throw = is_long_throw;
         drop(state);
         self.redraw();
         Ok(())

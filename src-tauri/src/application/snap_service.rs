@@ -83,15 +83,11 @@ impl SnapService {
     /// 점은 그리지 않는다. `show_snap_preview` 가 active_sector=None 상태로 호출되므로
     /// draw_scene 은 cursor_color (빨강)로 렌더링한다.
     pub fn on_modifier_pressed(&self, cursor_x: i32, cursor_y: i32) -> AppResult<()> {
-        let config = self.config_store.load()?;
-        let sector_count = config.overlay.sector_count;
-
         // 이전 오버레이 상태를 먼저 지움 — 깜빡임 방지.
         self.overlay.hide()?;
 
         // show_reticle에 origin(커서 위치) 전달 — overlay가 origin에 작은 원을 그림.
-        self.overlay
-            .show_reticle(cursor_x, cursor_y, sector_count)?;
+        self.overlay.show_reticle(cursor_x, cursor_y)?;
 
         let mut inner = self.inner.lock();
         inner.state = SnapState::Armed;
@@ -119,10 +115,10 @@ impl SnapService {
         const MIN_THROW_DISTANCE: f64 = 15.0;
 
         let config = self.config_store.load()?;
-        let sector_count = config.overlay.sector_count;
 
+        // 섹터 수는 8로 고정 — FsmContext와 geometry 테스트 기준값과 일치.
         let compute_sector = |dx: f64, dy: f64| {
-            geometry::compute_sector(euclid::Vector2D::new(dx, dy), sector_count)
+            geometry::compute_sector(euclid::Vector2D::new(dx, dy), 8)
         };
 
         // 상태 갱신은 임계구역 안에서 수행하고, overlay 호출 전에 락을 해제한다.
@@ -171,12 +167,32 @@ impl SnapService {
 
         if let Some(sector) = sector_to_highlight {
             // throw target 표시: highlight_sector 가 active_sector 를 Some 으로 만들어
-            // draw_scene 이 sector_highlight_color (BLUE)로 snap_preview 를 그리도록 함.
+            // draw_scene 이 snap_preview.colors.throw_color (BLUE)로 snap_preview 를
+            // 그리도록 함.
             self.overlay.highlight_sector(sector)?;
+
+            // Long Throw 거리 판별 — release 경로와 동일한 로직 사용.
+            // long_throw 임계값 이상이면 long_throw.mapping + is_long_throw=true,
+            // 그렇지 않으면 throw.mapping + is_long_throw=false.
+            let throw_distance = geometry::throw_distance(euclid::Vector2D::new(delta_x, delta_y));
+            let is_long_throw = config.throw.long_throw.enabled
+                && throw_distance >= config.throw.long_throw.distance as f64;
+            let mapping = if is_long_throw {
+                &config.throw.long_throw.mapping
+            } else {
+                &config.throw.mapping
+            };
+
             // snap 미리보기 — 해당 sector 에 매핑된 SnapTarget 의 픽셀 영역을 표시.
-            if let Ok(preview) = self.compute_snap_preview(sector, cursor_x, cursor_y) {
+            if let Ok(preview) = self.compute_snap_preview_with_mapping(
+                sector,
+                cursor_x,
+                cursor_y,
+                mapping,
+                &config,
+            ) {
                 if let Some((x, y, w, h)) = preview {
-                    self.overlay.show_snap_preview(x, y, w, h)?;
+                    self.overlay.show_snap_preview(x, y, w, h, is_long_throw)?;
                 }
             }
         }
@@ -218,11 +234,12 @@ impl SnapService {
         let config = self.config_store.load()?;
         let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
 
-        // Long Throw 임계값 판별 — 거리가 임계값 이상이면 long_throw_mapping 사용.
-        let long_throw_enabled = config.throw.long_throw_enabled;
-        let long_throw_distance = config.throw.long_throw_distance as f64;
-        let mapping = if long_throw_enabled && throw_distance >= long_throw_distance {
-            &config.throw.long_throw_mapping
+        // Long Throw 임계값 판별 — 거리가 임계값 이상이면 long_throw.mapping 사용.
+        // on_mouse_moved의 preview 판정 로직과 동일해야 preview 색상/매핑이 일관됨.
+        let is_long_throw = config.throw.long_throw.enabled
+            && throw_distance >= config.throw.long_throw.distance as f64;
+        let mapping = if is_long_throw {
+            &config.throw.long_throw.mapping
         } else {
             &config.throw.mapping
         };
@@ -259,9 +276,17 @@ impl SnapService {
 
     /// 주어진 sector 에 매핑된 SnapTarget 의 픽셀 영역을 계산 (미리보기용).
     /// Area 타입만 미리보기 가능 — Action 타입은 None 반환.
-    fn compute_snap_preview(&self, sector: u8, cursor_x: i32, cursor_y: i32) -> AppResult<Option<(i32, i32, i32, i32)>> {
-        let config = self.config_store.load()?;
-        let mapping = &config.throw.mapping;
+    ///
+    /// `mapping` 파라미터로 throw.mapping 또는 long_throw.mapping 중 하나를 전달.
+    /// `config` 는 snap.areas 에서 SnapTarget 을 찾기 위해 사용.
+    fn compute_snap_preview_with_mapping(
+        &self,
+        sector: u8,
+        cursor_x: i32,
+        cursor_y: i32,
+        mapping: &crate::domain::model::SectorMap,
+        config: &crate::domain::model::Config,
+    ) -> AppResult<Option<(i32, i32, i32, i32)>> {
         let target_id = match mapping.get(&sector) {
             Some(id) => id,
             None => return Ok(None),
@@ -341,8 +366,7 @@ mod tests {
     use crate::application::mock::{
         MockConfigStore, MockMonitorProvider, MockOverlayController, MockWindowMover,
     };
-    use crate::domain::model::{SnapTarget, ThrowConfig};
-    use std::collections::HashMap;
+    use crate::domain::model::{LongThrowConfig, SnapTarget, ThrowConfig};
 
     /// 테스트용 SnapService 구성.
     /// 섹터 0(오른쪽) -> "right-half", 섹터 4(왼쪽) -> "left-half" 매핑.
@@ -370,10 +394,12 @@ mod tests {
             let mut cfg = config_store.config.lock().unwrap();
             cfg.throw = ThrowConfig {
                 trigger_modifiers: vec!["Win".to_string()],
-                long_throw_enabled: true,
-                long_throw_distance: 400,
                 mapping,
-                long_throw_mapping: long_mapping,
+                long_throw: LongThrowConfig {
+                    enabled: true,
+                    distance: 400,
+                    mapping: long_mapping,
+                },
             };
             // areas에 right-half, left-half, maximize 추가
             cfg.snap.areas = vec![

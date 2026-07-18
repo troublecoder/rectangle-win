@@ -32,10 +32,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetCursorPos,
-    HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, PostThreadMessageW,
-    RegisterClassExW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
-    WH_MOUSE_LL, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT,
-    WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+    HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, RegisterClassExW, SetWindowsHookExW,
+    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_DISPLAYCHANGE,
+    WM_KEYDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
 };
 
 use crate::application::keyboard_service::KeyboardService;
@@ -134,11 +133,9 @@ fn throw_origin() -> Option<(i32, i32)> {
 
 /// 입력 리스너. `start()` 로 전용 스레드를 시작한다.
 ///
-/// 스레드 종료를 위해 thread id 를 보관하며, `stop()` 이 WM_QUIT 을 게시하면
-/// 메시지 루프가 종료되며 훅을 해제한다.
-pub struct Win32InputListener {
-    thread_id: u32,
-}
+/// 전용 "win32-input" 스레드에서 LL 훅 + 메시지 루프를 소유한다.
+/// 스레드 자체는 백그라운드에서 메시지 루프가 종료될 때까지 실행된다.
+pub struct Win32InputListener;
 
 impl Win32InputListener {
     /// 입력 리스너 스레드 시작.
@@ -214,19 +211,19 @@ impl Win32InputListener {
                 .expect("작업 스레드 시작 실패");
         }
 
-        // thread id 를 부모에게 전달하기 위한 슬롯.
-        let thread_id_slot: Arc<std::sync::Mutex<Option<u32>>> =
-            Arc::new(std::sync::Mutex::new(None));
-        let slot_for_thread = thread_id_slot.clone();
+        // 스레드가 시작 완료 신호를 보낼 때까지 대기하기 위한 슬롯.
+        // start() 는 동기적으로 반환해야 하므로 스레드가 메시지 루프 진입 직전에
+        // 신호를 보낸다.
+        let started_slot: Arc<std::sync::Mutex<bool>> = Arc::new(std::sync::Mutex::new(false));
+        let slot_for_thread = started_slot.clone();
         let mp = monitor_provider.clone();
 
         thread::Builder::new()
             .name("win32-input".into())
             .spawn(move || {
-                let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
                 {
                     let mut slot = slot_for_thread.lock().unwrap();
-                    *slot = Some(tid);
+                    *slot = true;
                 }
                 if let Err(e) = run_message_loop(&mp) {
                     log::error!("입력 리스너 오류: {e}");
@@ -234,33 +231,18 @@ impl Win32InputListener {
             })
             .expect("입력 리스너 스레드 시작 실패");
 
-        // 스레드가 thread id 를 기록할 때까지 대기 (start() 는 동기적으로 반환해야 함).
-        let thread_id = loop {
-            if let Some(tid) = *thread_id_slot.lock().unwrap() {
-                break tid;
-            }
+        // 스레드가 시작 신호를 보낼 때까지 대기 (start() 는 동기적으로 반환해야 함).
+        while !*started_slot.lock().unwrap() {
             thread::sleep(Duration::from_millis(1));
-        };
+        }
 
-        Win32InputListener { thread_id }
+        Win32InputListener
     }
 
     /// Config 갱신 — 외부(save_config)에서 호출. static atomics 에 반영.
     pub fn update_config(config: &Config) {
         // 주의: 이 impl 메서드와 동일한 이름의 자유 함수를 호출하므로 전체 경로 필요.
         update_config_static(config);
-    }
-
-    /// 입력 리스너 정지 — 스레드에 WM_QUIT 게시.
-    ///
-    /// 메시지 루프가 WM_QUIT 을 받으면 훅 해제 후 종료된다.
-    /// 스레드 자체의 join 은 수행하지 않는다 (best-effort).
-    #[allow(dead_code)]
-    pub fn stop(&self) {
-        // SAFETY: PostThreadMessageW 는 thread id 가 유효하면 안전.
-        unsafe {
-            let _ = PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
-        }
     }
 }
 

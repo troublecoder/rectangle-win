@@ -29,7 +29,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,13 +37,5 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEMjU2NUZEQjcxQTE3QzgKUldUSUZ4cTMvV1VsamFkQ3BhTDdMdW05OFJsS3p4Zk9kMW11NWdXZzJzM0V6eU1Xb2YybVF6QmcK",
-      "endpoints": [
-        "https://github.com/troublecoder/rectangle-win/releases/latest/download/latest.json"
-      ]
-    }
   }
 }

@@ -37,9 +37,8 @@ pub trait ConfigStore: Send + Sync {
 
 /// 오버레이 창 제어 (클릭스루 투명창 위 vue-konva)
 pub trait OverlayController: Send + Sync {
-    fn show_reticle(&self, center_x: i32, center_y: i32, sector_count: u8) -> AppResult<()>;
-    fn update_cursor_indicator(&self, x: i32, y: i32) -> AppResult<()>;
+    fn show_reticle(&self, center_x: i32, center_y: i32) -> AppResult<()>;
     fn highlight_sector(&self, sector: u8) -> AppResult<()>;
-    fn show_snap_preview(&self, x: i32, y: i32, width: i32, height: i32) -> AppResult<()>;
+    fn show_snap_preview(&self, x: i32, y: i32, width: i32, height: i32, is_long_throw: bool) -> AppResult<()>;
     fn hide(&self) -> AppResult<()>;
 }

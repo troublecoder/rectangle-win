@@ -1,7 +1,6 @@
 /**
  * Tauri IPC 래퍼 — invoke 호출 + Zod 파싱을 캡슐화.
  *
- * 모든 호출은 백엔드 commands.rs 의 6개 명령에 대응한다.
  * 런타임 검증 실패시 ZodError가 그대로 throw된다.
  */
 import { invoke } from '@tauri-apps/api/core'
@@ -10,7 +9,6 @@ import {
   monitorInfoSchema,
   type Config,
   type MonitorInfo,
-  type SnapPresetName,
 } from '@/entities/config'
 
 /** CommandError (commands.rs) */
@@ -33,11 +31,6 @@ export async function saveConfig(config: Config): Promise<void> {
 
 export async function getConfigPath(): Promise<string> {
   return invoke<string>('get_config_path')
-}
-
-export async function applyPreset(presetName: SnapPresetName): Promise<Config> {
-  const raw = await invoke<unknown>('apply_preset', { presetName })
-  return configSchema.parse(raw)
 }
 
 export async function getMonitors(): Promise<MonitorInfo[]> {

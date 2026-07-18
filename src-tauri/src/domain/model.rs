@@ -160,8 +160,25 @@ pub struct SnapConfig {
 impl Default for SnapConfig {
     fn default() -> Self {
         Self {
-            active_preset: "standard".to_string(),
+            active_preset: "full".to_string(),
             areas: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LongThrowConfig {
+    pub enabled: bool,
+    pub distance: u32,
+    pub mapping: SectorMap,
+}
+
+impl Default for LongThrowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            distance: 400,
+            mapping: SectorMap::new(),
         }
     }
 }
@@ -169,20 +186,16 @@ impl Default for SnapConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThrowConfig {
     pub trigger_modifiers: Vec<String>,
-    pub long_throw_enabled: bool,
-    pub long_throw_distance: u32,
     pub mapping: SectorMap,
-    pub long_throw_mapping: SectorMap,
+    pub long_throw: LongThrowConfig,
 }
 
 impl Default for ThrowConfig {
     fn default() -> Self {
         Self {
             trigger_modifiers: vec!["Win".to_string(), "Alt".to_string()],
-            long_throw_enabled: true,
-            long_throw_distance: 400,
             mapping: SectorMap::new(),
-            long_throw_mapping: SectorMap::new(),
+            long_throw: LongThrowConfig::default(),
         }
     }
 }
@@ -243,41 +256,76 @@ impl<'de> Deserialize<'de> for SectorMap {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardConfig {
     pub enabled: bool,
-    pub cycle_timeout_ms: u64,
 }
 
 impl Default for KeyboardConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            cycle_timeout_ms: 1500,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CursorConfig {
+    pub indicator: bool,
+    pub radius: u32,
+    pub color: String,
+    pub opacity: f64,
+}
+
+impl Default for CursorConfig {
+    fn default() -> Self {
+        Self {
+            indicator: true,
+            radius: 18,
+            color: "#E53935".to_string(),
+            opacity: 0.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviewColors {
+    pub throw_color: String,
+    pub long_throw_color: String,
+}
+
+impl Default for PreviewColors {
+    fn default() -> Self {
+        Self {
+            throw_color: "#3B82F6".to_string(),
+            long_throw_color: "#3B82F6".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SnapPreviewConfig {
+    pub enabled: bool,
+    pub colors: PreviewColors,
+}
+
+impl Default for SnapPreviewConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            colors: PreviewColors::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OverlayConfig {
-    pub reticle_style: String,
-    pub cursor_indicator: bool,
-    pub cursor_radius: u32,
-    pub cursor_color: String,
-    pub cursor_opacity: f64,
-    pub sector_highlight_color: String,
-    pub sector_count: u8,
-    pub snap_preview: bool,
+    pub cursor: CursorConfig,
+    pub snap_preview: SnapPreviewConfig,
 }
 
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
-            reticle_style: "pie".to_string(),
-            cursor_indicator: true,
-            cursor_radius: 18,
-            cursor_color: "#E53935".to_string(),
-            cursor_opacity: 0.5,
-            sector_highlight_color: "#3B82F6".to_string(),
-            sector_count: 8,
-            snap_preview: true,
+            cursor: CursorConfig::default(),
+            snap_preview: SnapPreviewConfig::default(),
         }
     }
 }

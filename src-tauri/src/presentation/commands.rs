@@ -10,7 +10,6 @@ use crate::application::errors::ApplicationError;
 use crate::application::ports::{ConfigStore, MonitorProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::model::Config;
-use crate::domain::presets::SnapPreset;
 use crate::presentation::state::AppState;
 
 /// 프론트엔드로 직렬화되는 에러 응답.
@@ -64,17 +63,6 @@ pub fn save_config(state: State<'_, AppState>, config: Config) -> CmdResult<()> 
 #[tauri::command]
 pub fn get_config_path(state: State<'_, AppState>) -> String {
     state.config_store.path().to_string_lossy().to_string()
-}
-
-/// 프리셋을 적용한다 — active_preset 및 areas 를 갱신해 저장.
-#[tauri::command]
-pub fn apply_preset(state: State<'_, AppState>, preset_name: String) -> CmdResult<Config> {
-    let preset = SnapPreset::from_str(&preset_name)?;
-    let mut config = state.config_store.load()?;
-    config.snap.active_preset = preset_name;
-    config.snap.areas = preset.targets();
-    state.config_store.save(&config)?;
-    Ok(config)
 }
 
 /// 모니터 정보 DTO (프론트엔드 직렬화용).
