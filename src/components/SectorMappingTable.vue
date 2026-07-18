@@ -20,9 +20,11 @@ const { t } = useI18n()
 const SECTOR_COUNT = 8
 const sectors = computed(() => Array.from({ length: SECTOR_COUNT }, (_, i) => i))
 
-const targetOptions = computed(() =>
-  props.targets.map((tgt) => ({ label: tgt.name, value: tgt.id })),
-)
+// "할당 안 함" 옵션을 맨 앞에 추가 — value가 빈 문자열이면 매핑 제거.
+const targetOptions = computed(() => [
+  { label: t('throw.unassigned'), value: '' },
+  ...props.targets.map((tgt) => ({ label: tgt.name, value: tgt.id })),
+])
 
 const sectorLabels: Record<number, string> = {
   0: '→', 1: '↘', 2: '↓', 3: '↙',
@@ -38,6 +40,13 @@ function setTarget(map: SectorMap, sector: number, targetId: string): SectorMap 
   if (targetId) next[String(sector)] = targetId
   else delete next[String(sector)]
   return next
+}
+
+// 개별 섹터 매핑 제거 (X 버튼).
+function clearTarget(map: SectorMap, sector: number, which: 'mapping' | 'longThrow') {
+  const next = setTarget(map, sector, '')
+  if (which === 'mapping') emit('update:mapping', next)
+  else emit('update:longThrowMapping', next)
 }
 </script>
 
@@ -58,6 +67,15 @@ function setTarget(map: SectorMap, sector: number, targetId: string): SectorMap 
               class="flex-1"
               @update:model-value="emit('update:mapping', setTarget(mapping, sector, $event as string))"
             />
+            <UButton
+              v-if="getTarget(mapping, sector)"
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :aria-label="t('common.delete')"
+              @click="clearTarget(mapping, sector, 'mapping')"
+            />
           </div>
         </div>
       </div>
@@ -74,6 +92,15 @@ function setTarget(map: SectorMap, sector: number, targetId: string): SectorMap 
               size="sm"
               class="flex-1"
               @update:model-value="emit('update:longThrowMapping', setTarget(longThrowMapping, sector, $event as string))"
+            />
+            <UButton
+              v-if="getTarget(longThrowMapping, sector)"
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :aria-label="t('common.delete')"
+              @click="clearTarget(longThrowMapping, sector, 'longThrow')"
             />
           </div>
         </div>

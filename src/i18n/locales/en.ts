@@ -36,6 +36,7 @@ export default {
     captureHint: 'ESC to cancel. Press modifier keys (Win/Ctrl/Alt/Shift)',
     captureHintMulti: 'Hold modifier keys to build a combo. ESC to cancel',
     noHotkey: 'Not set',
+    unassigned: 'Unassigned',
     sectorMapping: 'Sector Mapping',
     longThrow: 'Long Throw',
     longThrowEnabled: 'Enable long throw',

@@ -36,6 +36,7 @@ export default {
     captureHint: 'ESC로 취소. modifier 키(Win/Ctrl/Alt/Shift)를 누르세요',
     captureHintMulti: 'modifier 키를 누른 채로 조합. ESC로 취소',
     noHotkey: '설정 안 됨',
+    unassigned: '할당 안 함',
     sectorMapping: '섹터 매핑',
     longThrow: '롱 스로우',
     longThrowEnabled: '롱 스로우 활성화',
