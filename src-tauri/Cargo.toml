@@ -27,7 +27,6 @@ dirs = "5"
 # Tauri v2 데스크톱 프레임워크 + 공식 플러그인
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 
