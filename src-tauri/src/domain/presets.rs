@@ -1,6 +1,5 @@
 use crate::domain::model::SnapTarget;
-
-/// 프리셋 패키지 — 콤보박스 선택지
+use crate::domain::model::WindowAction;/// 프리셋 패키지 — 콤보박스 선택지
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapPreset {
     Minimal,
@@ -58,6 +57,14 @@ fn area(id: &str, name: &str, x: f64, y: f64, w: f64, h: f64) -> SnapTarget {
     }
 }
 
+fn action(id: &str, name: &str, act: WindowAction) -> SnapTarget {
+    SnapTarget::Action {
+        id: id.to_string(),
+        name: name.to_string(),
+        action: act,
+    }
+}
+
 // ─── 프리셋별 영역 정의 ───
 
 fn minimal() -> Vec<SnapTarget> {
@@ -66,7 +73,7 @@ fn minimal() -> Vec<SnapTarget> {
         area("right-half", "Right Half", 0.5, 0.0, 0.5, 1.0),
         area("top-half", "Top Half", 0.0, 0.0, 1.0, 0.5),
         area("bottom-half", "Bottom Half", 0.0, 0.5, 1.0, 0.5),
-        area("almost-maximize", "Almost Maximize", 0.05, 0.05, 0.9, 0.9),
+        action("maximize", "Maximize", WindowAction::Maximize),
     ]
 }
 
@@ -90,6 +97,11 @@ fn extended() -> Vec<SnapTarget> {
         area("two-thirds-left", "Left Two Thirds", 0.0, 0.0, 0.667, 1.0),
         area("two-thirds-right", "Right Two Thirds", 0.333, 0.0, 0.667, 1.0),
         area("center", "Center", 0.25, 0.25, 0.5, 0.5),
+        action("almost-maximize", "Almost Maximize", WindowAction::AlmostMaximize),
+        action("maximize-height", "Maximize Height", WindowAction::MaximizeHeight),
+        action("minimize", "Minimize", WindowAction::Minimize),
+        action("restore", "Restore", WindowAction::Restore),
+        action("center-action", "Center Action", WindowAction::Center),
     ]);
     v
 }
@@ -118,6 +130,7 @@ fn portrait() -> Vec<SnapTarget> {
         area("quarter-tr", "Top Right Quarter", 0.5, 0.0, 0.5, 0.5),
         area("quarter-bl", "Bottom Left Quarter", 0.0, 0.5, 0.5, 0.5),
         area("quarter-br", "Bottom Right Quarter", 0.5, 0.5, 0.5, 0.5),
+        action("maximize", "Maximize", WindowAction::Maximize),
     ]
 }
 
@@ -153,7 +166,7 @@ mod tests {
         let ids: Vec<&str> = targets.iter().map(|t| t.id()).collect();
         assert!(ids.contains(&"third-left"));
         assert!(ids.contains(&"quarter-tl"));
-        assert!(ids.contains(&"almost-maximize"));
+        assert!(ids.contains(&"maximize"));
     }
 
     #[test]

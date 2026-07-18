@@ -23,6 +23,10 @@ export const defaultConfig: Config = {
       { kind: 'area', id: 'third-left', name: 'Third Left', x_ratio: 0, y_ratio: 0, w_ratio: 1 / 3, h_ratio: 1 },
       { kind: 'area', id: 'third-center', name: 'Third Center', x_ratio: 1 / 3, y_ratio: 0, w_ratio: 1 / 3, h_ratio: 1 },
       { kind: 'area', id: 'third-right', name: 'Third Right', x_ratio: 2 / 3, y_ratio: 0, w_ratio: 1 / 3, h_ratio: 1 },
+      { kind: 'action', id: 'maximize', name: 'Maximize', action: 'Maximize' },
+      { kind: 'action', id: 'almost-maximize', name: 'Almost Maximize', action: 'AlmostMaximize' },
+      { kind: 'action', id: 'maximize-height', name: 'Maximize Height', action: 'MaximizeHeight' },
+      { kind: 'action', id: 'restore', name: 'Restore', action: 'Restore' },
     ],
   },
   throw: {
@@ -30,11 +34,11 @@ export const defaultConfig: Config = {
     mapping: {
       '0': 'two-thirds-right',
       '1': 'sixth-br',
-      '2': 'bottom-half',
+      '2': 'restore',
       '3': 'sixth-bl',
       '4': 'third-left',
       '5': 'sixth-tl',
-      '6': 'top-half',
+      '6': 'maximize',
       '7': 'sixth-tr',
     },
     long_throw: {

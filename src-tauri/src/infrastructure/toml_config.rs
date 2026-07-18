@@ -82,11 +82,11 @@ impl TomlConfigStore {
         let mut mapping = SectorMap::new();
         mapping.insert(0, "two-thirds-right".to_string()); // → 우 — 우측 2/3
         mapping.insert(1, "sixth-br".to_string());         // ↘ 우하 — 우하 1/6
-        mapping.insert(2, "bottom-half".to_string());      // ↓ 아래 — 하단 절반
+        mapping.insert(2, "restore".to_string());          // ↓ 아래 — 복원
         mapping.insert(3, "sixth-bl".to_string());         // ↙ 좌하 — 좌하 1/6
         mapping.insert(4, "third-left".to_string());       // ← 좌 — 좌측 1/3
         mapping.insert(5, "sixth-tl".to_string());         // ↖ 좌상 — 좌상 1/6
-        mapping.insert(6, "top-half".to_string());         // ↑ 위 — 상단 절반
+        mapping.insert(6, "maximize".to_string());         // ↑ 위 — 최대화
         mapping.insert(7, "sixth-tr".to_string());         // ↗ 우상 — 우상 1/6
         config.throw.mapping = mapping;
 
