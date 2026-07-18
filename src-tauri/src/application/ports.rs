@@ -23,6 +23,9 @@ pub trait WindowMover: Send + Sync {
 
     /// 창의 현재 Rect (픽셀)
     fn get_window_rect(&self, window_handle: u64) -> AppResult<MonitorBounds>;
+
+    /// 창을 z-order 최상위로 올림. lock-on 시점에 미리 호출.
+    fn bring_to_foreground(&self, window_handle: u64);
 }
 
 /// 모니터 정보 조회

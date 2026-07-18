@@ -91,16 +91,33 @@ impl SnapService {
         // 이전 오버레이 상태를 먼저 지움 — 깜빡임 방지.
         self.overlay.hide()?;
 
-        // show_reticle에 origin(커서 위치) 전달 — overlay가 origin에 작은 원을 그림.
+        // modifier를 누른 순간 커서 아래의 창을 snap 대상으로 고정.
+        let window = self
+            .window_mover
+            .window_at_cursor(cursor_x, cursor_y)
+            .or_else(|| self.window_mover.get_foreground_window());
+
+        // lock-on 시점에 바로 z-order 최상위로 — snap 이동 시 이미 맨 위에 있도록.
+        if let Some(hwnd) = window {
+            self.window_mover.bring_to_foreground(hwnd);
+        }
+
+        // lock-on 프리뷰: 현재 창의 rect를 cursor 색으로 표시.
         self.overlay.show_reticle(cursor_x, cursor_y)?;
+        if let Some(hwnd) = window {
+            if let Ok(rect) = self.window_mover.get_window_rect(hwnd) {
+                self.overlay.show_snap_preview(
+                    rect.origin.x, rect.origin.y,
+                    rect.size.width, rect.size.height,
+                    false,
+                )?;
+            }
+        }
 
         let mut inner = self.inner.lock();
         inner.state = SnapState::Armed;
-        // Armed 진입 시 섹터/거리는 초기화된 상태여야 한다.
         inner.fsm = CursorFsm::default();
-        // modifier를 누른 순간 커서 아래의 창을 snap 대상으로 고정.
-        // 이후 마우스 이동/포커스 변화와 무관하게 이 창이 snap된다.
-        inner.locked_window = self.window_mover.window_at_cursor(cursor_x, cursor_y);
+        inner.locked_window = window;
         Ok(())
     }
 

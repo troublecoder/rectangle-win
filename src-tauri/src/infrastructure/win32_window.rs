@@ -15,11 +15,13 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowPlacement,
-    GetWindowThreadProcessId, GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetForegroundWindow,
-    SetWindowPlacement, ShowWindow, WindowFromPoint, GA_ROOT, GWL_STYLE, SW_MAXIMIZE, SW_MINIMIZE,
-    SW_RESTORE, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WS_SIZEBOX,
+    BringWindowToTop, GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId,
+    GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetForegroundWindow, SetWindowPos, ShowWindow,
+    WindowFromPoint, GA_ROOT, GWL_STYLE, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    WS_SIZEBOX,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, VK_MENU, KEYEVENTF_KEYUP};
 
 use crate::application::errors::{ApplicationError, AppResult};
 use crate::application::ports::WindowMover;
@@ -125,41 +127,32 @@ fn adjust_rect_for_border(hwnd: HWND, zone_rect: RECT) -> RECT {
     new_rect
 }
 
-/// FancyZones 의 `SizeWindowToRect` 포팅.
-///
-/// `SetWindowPlacement` 를 사용해 창을 배치한다. `SetWindowPos` 와 달리:
-/// - 최소화/최대화 상태를 정확히 복원(WPF_RESTORETOMAXIMIZED 플래그 제어)
-/// - `WPF_ASYNCWINDOWPLACEMENT` 로 비동기 처리
-/// - DPI-unaware 타겟 창은 OS가 자동 스케일링
-/// 두 번 호출로 스케일링 안정화 (FancyZones Issue #365).
+/// 창을 지정된 rect로 이동/크기 조절. SetWindowPos 1회 호출 — 빠르고 즉각적.
+/// HWND_TOP으로 z-order 최상위에 배치 (SWP_NOZORDER 사용 안 함 — 충돌).
 fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
-    // SAFETY: hwnd는 유효한 창 핸들. placement 버퍼는 스택.
+    // SAFETY: hwnd는 유효한 창 핸들.
     unsafe {
-        // 최대화/최소화 상태면 먼저 복원 — SetWindowPlacement 가 무시될 수 있음.
         if IsZoomed(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        SetWindowPos(
+            hwnd,
+            HWND_TOP,
+            rect.left,
+            rect.top,
+            w,
+            h,
+            SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+        )
+        .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPos: {e}")))?;
 
-        let mut placement = WINDOWPLACEMENT {
-            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-            ..Default::default()
-        };
-        GetWindowPlacement(hwnd, &mut placement)
-            .map_err(|e| ApplicationError::WindowOperation(format!("GetWindowPlacement: {e}")))?;
-
-        placement.rcNormalPosition = rect;
-        placement.flags |= WPF_ASYNCWINDOWPLACEMENT;
-        placement.showCmd = SW_RESTORE.0 as u32;
-
-        // 두 번 호출 — 첫 번째는 DPI 스케일링 적용, 두 번째로 안정화.
-        SetWindowPlacement(hwnd, &placement)
-            .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPlacement(1): {e}")))?;
-        SetWindowPlacement(hwnd, &placement)
-            .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPlacement(2): {e}")))?;
-
-        // snap된 창을 foreground로 가져오기 — SetWindowPlacement는 z-order를 유지하므로
-        // 명시적으로 foreground 전환하지 않으면 이전 foreground 창 밑에 깔림.
-        // SetForegroundWindow는 OS 포그라운드 타이머 제한이 있어 BringWindowToTop도 병행.
+        // snap 이동 후 foreground 전환 — snap된 창을 실제로 맨 앞으로.
+        // HWND_TOP만으로는 다른 프로세스 창 위로 안 올라감.
+        // Alt 키 가짜 입력으로 Windows foreground 권한 제한 우회 후 SetForegroundWindow.
+        keybd_event(VK_MENU.0 as u8, 0, Default::default(), 0);
+        keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
         let _ = SetForegroundWindow(hwnd);
         let _ = BringWindowToTop(hwnd);
     }
@@ -265,6 +258,19 @@ impl WindowMover for Win32WindowMover {
             rect.right - rect.left,
             rect.bottom - rect.top,
         ))
+    }
+
+    fn bring_to_foreground(&self, window_handle: u64) {
+        let hwnd = hwnd_from_u64(window_handle);
+        // z-order만 HWND_TOP으로 변경 — 크기/위치는 그대로.
+        // SWP_NOSIZE | SWP_NOMOVE로 0,0,0,0 무시. SWP_NOACTIVATE로 포커스 효과 최소화.
+        // SAFETY: hwnd는 유효한 창 핸들.
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd, HWND_TOP, 0, 0, 0, 0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+            );
+        }
     }
 }
 
