@@ -23,7 +23,6 @@ use statig::prelude::IntoStateMachineExt;
 /// 명시적 단위 마커 없이 호출 가능하다.
 fn make_ctx() -> FsmContext {
     FsmContext {
-        sector_count: 8,
         compute_sector: |dx, dy| geometry::compute_sector(euclid::Vector2D::new(dx, dy), 8),
         compute_distance: |dx, dy| geometry::throw_distance(euclid::Vector2D::new(dx, dy)),
     }

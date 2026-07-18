@@ -130,16 +130,19 @@ pub struct MockOverlayController {
     pub last_sector: Mutex<Option<u8>>,
     /// 마지막으로 show_snap_preview 에 전달된 사각형.
     pub last_snap_preview: Mutex<Option<(i32, i32, i32, i32)>>,
+    /// 마지막으로 show_snap_preview 에 전달된 is_long_throw 플래그.
+    pub last_is_long_throw: Mutex<bool>,
 }
 
 impl OverlayController for MockOverlayController {
-    fn show_reticle(&self, _cx: i32, _cy: i32, _count: u8) -> AppResult<()> {
+    fn show_reticle(&self, _cx: i32, _cy: i32) -> AppResult<()> {
         let mut s = self.visible.lock().unwrap();
         *s = true;
         drop(s);
         // Win32LayeredOverlay 와 동일: show_reticle 은 active_sector/snap_preview 클리어.
         *self.last_sector.lock().unwrap() = None;
         *self.last_snap_preview.lock().unwrap() = None;
+        *self.last_is_long_throw.lock().unwrap() = false;
         Ok(())
     }
 
@@ -148,8 +151,9 @@ impl OverlayController for MockOverlayController {
         Ok(())
     }
 
-    fn show_snap_preview(&self, x: i32, y: i32, w: i32, h: i32) -> AppResult<()> {
+    fn show_snap_preview(&self, x: i32, y: i32, w: i32, h: i32, is_long_throw: bool) -> AppResult<()> {
         *self.last_snap_preview.lock().unwrap() = Some((x, y, w, h));
+        *self.last_is_long_throw.lock().unwrap() = is_long_throw;
         Ok(())
     }
 

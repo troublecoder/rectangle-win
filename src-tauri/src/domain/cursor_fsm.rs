@@ -32,10 +32,6 @@ pub type DistanceComputer = fn(delta_x: f64, delta_y: f64) -> f64;
 /// 함수 포인터이므로 `Clone + Copy`를 유지한다.
 #[derive(Debug, Clone, Copy)]
 pub struct FsmContext {
-    /// 설정된 섹터 수 — 클로저가 캡처하지만 FSM 본체는 직접 사용하지 않음.
-    /// 향후 디버그/로그 용도로 노출.
-    #[allow(dead_code)]
-    pub sector_count: u8,
     pub compute_sector: SectorComputer,
     pub compute_distance: DistanceComputer,
 }
@@ -129,7 +125,6 @@ mod tests {
 
     fn test_ctx() -> FsmContext {
         FsmContext {
-            sector_count: 8,
             compute_sector: |dx, dy| {
                 geometry::compute_sector(euclid::Vector2D::new(dx, dy), 8)
             },

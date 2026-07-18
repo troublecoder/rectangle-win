@@ -72,10 +72,9 @@ use crate::domain::model::OverlayConfig;
 struct OverlayDrawState {
     visible: bool,
     center: Option<(i32, i32)>,
-    #[allow(dead_code)]
-    sector_count: u8,
     active_sector: Option<u8>,
     snap_preview: Option<(i32, i32, i32, i32)>,
+    is_long_throw: bool,
 }
 
 /// WS_EX_LAYERED + UpdateLayeredWindow 기반 오버레이.
@@ -355,14 +354,15 @@ impl Win32LayeredOverlay {
 
     /// 실제 장면 그리기 — snap 미리보기 점선 사각형만 그린다.
     ///
-    /// 더 이상 커서 점/원/레티클 마커를 그리지 않는다. 색상은 `active_sector` 의
-    /// 유무에 따라 자동으로 전환된다 (Option 2):
-    /// - `active_sector == None` (lock-on, 현재 창): `cursor_color` (RED #E53935)
-    /// - `active_sector == Some(_)` (throw target): `sector_highlight_color` (BLUE #3B82F6)
+    /// 더 이상 커서 점/원/레티클 마커를 그리지 않는다. 색상은 `is_long_throw` 에
+    /// 따라 자동으로 전환된다:
+    /// - `is_long_throw == false` (일반 throw target): `colors.throw_color` (BLUE #3B82F6)
+    /// - `is_long_throw == true` (long throw target): `colors.long_throw_color`
     ///
     /// 호출 패턴:
-    /// - lock-on: `show_snap_preview` 만 호출 (active_sector=None → RED)
-    /// - throw:   `highlight_sector` → `show_snap_preview` (active_sector=Some → BLUE)
+    /// - lock-on: `show_snap_preview` 만 호출 (is_long_throw=false → throw_color)
+    /// - throw:   `highlight_sector` → `show_snap_preview` (is_long_throw=false → throw_color)
+    /// - long throw: `highlight_sector` → `show_snap_preview(is_long_throw=true)` (long_throw_color)
     ///
     /// **좌표계:** 오버레이 창은 가상 데스크톱 전체 크기로 고정되므로
     ///snap preview 사각형은 가상 화면 절대 좌표 (sx, sy, sw, sh) 그대로 그린다.
@@ -387,13 +387,13 @@ impl Win32LayeredOverlay {
             }));
 
             // origin(락온 시 커서 위치)에 작은 원 표시 — 기준점 시각화.
-            if cfg.cursor_indicator {
+            if cfg.cursor.indicator {
                 if let Some((cx, cy)) = state.center {
-                    let origin_color = Self::parse_hex_color(&cfg.cursor_color);
+                    let origin_color = Self::parse_hex_color(&cfg.cursor.color);
                     let mut c = origin_color;
-                    c.a = cfg.cursor_opacity as f32;
+                    c.a = cfg.cursor.opacity as f32;
                     res.brush.SetColor(&c);
-                    let r = cfg.cursor_radius as f32;
+                    let r = cfg.cursor.radius as f32;
                     let ellipse = D2D1_ELLIPSE {
                         point: D2D_POINT_2F { x: cx as f32, y: cy as f32 },
                         radiusX: r,
@@ -404,7 +404,7 @@ impl Win32LayeredOverlay {
             }
 
             // snap 미리보기 — 절대 좌표(가상 화면 좌표)로 그림.
-            if cfg.snap_preview {
+            if cfg.snap_preview.enabled {
                 if let Some((sx, sy, sw, sh)) = state.snap_preview {
                     if sw > 0 && sh > 0 {
                         let rect = D2D_RECT_F {
@@ -413,12 +413,12 @@ impl Win32LayeredOverlay {
                             right: (sx + sw) as f32,
                             bottom: (sy + sh) as f32,
                         };
-                        // active_sector == None → lock-on (cursor_color, RED)
-                        // active_sector == Some → throw target (sector_highlight_color, BLUE)
-                        let color_hex = if state.active_sector.is_some() {
-                            &cfg.sector_highlight_color
+                        // is_long_throw == false → throw target (colors.throw_color, BLUE)
+                        // is_long_throw == true  → long throw target (colors.long_throw_color)
+                        let color_hex = if state.is_long_throw {
+                            &cfg.snap_preview.colors.long_throw_color
                         } else {
-                            &cfg.cursor_color
+                            &cfg.snap_preview.colors.throw_color
                         };
                         let base_color = Self::parse_hex_color(color_hex);
                         // 채우기 (알파 0.20).
@@ -510,15 +510,15 @@ impl Win32LayeredOverlay {
 impl OverlayController for Win32LayeredOverlay {
     /// Lock-on 진입 트리거 — 오버레이 창을 visible 상태로 전환한다.
     /// 더 이상 커서 점/레티클을 그리지 않는다. snap_preview 별도 표시 필요.
-    /// active_sector=None, snap_preview=None 으로 클리어하여 다음 show_snap_preview 가
-    /// RED(lock-on) 로 그려지도록 한다.
-    fn show_reticle(&self, center_x: i32, center_y: i32, sector_count: u8) -> AppResult<()> {
+    /// active_sector=None, snap_preview=None, is_long_throw=false 로 클리어하여
+    /// 다음 show_snap_preview 가 throw_color 로 그려지도록 한다.
+    fn show_reticle(&self, center_x: i32, center_y: i32) -> AppResult<()> {
         let mut state = self.state.lock().unwrap();
         state.visible = true;
         state.center = Some((center_x, center_y));
-        state.sector_count = sector_count;
         state.active_sector = None;
         state.snap_preview = None;
+        state.is_long_throw = false;
         drop(state);
         // redraw로 이전 프리뷰를 지우고 빈(투명) 상태로 만듦.
         self.redraw();
@@ -533,9 +533,10 @@ impl OverlayController for Win32LayeredOverlay {
         Ok(())
     }
 
-    fn show_snap_preview(&self, x: i32, y: i32, width: i32, height: i32) -> AppResult<()> {
+    fn show_snap_preview(&self, x: i32, y: i32, width: i32, height: i32, is_long_throw: bool) -> AppResult<()> {
         let mut state = self.state.lock().unwrap();
         state.snap_preview = Some((x, y, width, height));
+        state.is_long_throw = is_long_throw;
         drop(state);
         self.redraw();
         Ok(())
