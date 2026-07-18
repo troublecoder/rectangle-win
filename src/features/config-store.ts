@@ -27,7 +27,13 @@ export const useConfigStore = defineStore('config', () => {
     return JSON.stringify(saved.value) !== JSON.stringify(draft.value)
   })
 
-  async function load() {
+  // 이미 로드했고 저장본이 있으면 중복 로드 금지.
+  // 각 페이지 onMounted(load)가 페이지 전환마다 백엔드 원본으로 draft를 덮어쓰는
+  // 버그 방지 (한 페이지에서 수정 후 다른 페이지로 이동하면 수정분이 사라짐).
+  const loaded = ref(false)
+
+  async function load(force = false) {
+    if (loaded.value && !force) return
     loading.value = true
     error.value = null
     try {
@@ -37,11 +43,17 @@ export const useConfigStore = defineStore('config', () => {
       // 언어 단일 진실: config.general.language → i18n locale 동기화
       // (legacy: false 이므로 i18n.global.locale은 ref, .value로 접근)
       i18n.global.locale.value = config.general.language as SupportedLocale
+      loaded.value = true
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       loading.value = false
     }
+  }
+
+  async function reload() {
+    // save 후 백엔드 재동기화 또는 사용자 명시적 새로고침용.
+    return load(true)
   }
 
   async function save() {
