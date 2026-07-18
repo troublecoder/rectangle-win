@@ -43,15 +43,6 @@ export default {
     longThrowDistance: '롱 스로우 거리',
     longThrowDistanceDesc: '픽셀 단위 거리 임계값',
   },
-  keyboard: {
-    title: '키보드 스냅',
-    description: '방향키 스냅 설정',
-    enabled: '키보드 스냅 활성화',
-    triggerModifiers: '트리거 수정자',
-    sharedModifiersNote: '키보드 스냅은 스로우 트리거 수정자(Win+Alt)를 공유합니다. 방향키로 포커스된 창을 스냅합니다.',
-    cycleTimeout: '체인 타임아웃',
-    cycleTimeoutDesc: '이 시간(ms) 후 체인 초기화',
-  },
   display: {
     title: '디스플레이',
     description: '오버레이 외관',

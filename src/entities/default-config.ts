@@ -30,11 +30,21 @@ export const defaultConfig: Config = {
   },
   throw: {
     trigger_modifiers: ['Win', 'Alt'],
-    mapping: { '0': 'right-half', '2': 'bottom-half', '4': 'left-half', '6': 'top-half' },
+    // 기본 매핑: 우측 방향은 우측 2/3, 좌측 방향은 좌측 1/3. ↓=restore, ↑=maximize.
+    mapping: {
+      '0': 'two-thirds-right',
+      '1': 'sixth-br',
+      '2': 'restore',
+      '3': 'sixth-bl',
+      '4': 'third-left',
+      '5': 'sixth-tl',
+      '6': 'maximize',
+      '7': 'sixth-tr',
+    },
     long_throw: {
       enabled: true,
       distance: 400,
-      mapping: { '0': 'third-right', '2': 'maximize', '4': 'third-left', '6': 'maximize-height' },
+      mapping: {},
     },
   },
   keyboard: {
