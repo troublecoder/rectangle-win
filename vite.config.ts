@@ -6,19 +6,7 @@ import { resolve } from 'path'
 export default defineConfig({
   plugins: [
     vue(),
-    ui({
-      ui: {
-        colors: {
-          primary: 'primary',
-          secondary: 'info',
-          neutral: 'neutral',
-          success: 'success',
-          warning: 'warning',
-          error: 'error',
-          info: 'info',
-        },
-      },
-    }),
+    ui(),
   ],
   resolve: {
     alias: {

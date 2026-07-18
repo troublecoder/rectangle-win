@@ -12,7 +12,6 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
-    "@catppuccin/palette": "^1.8.0",
     "@nuxt/ui": "^4",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-log": "^2",
