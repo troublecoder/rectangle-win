@@ -53,7 +53,7 @@ impl TomlConfigStore {
         let contents = std::fs::read_to_string(&self.path).map_err(|e| {
             ApplicationError::WindowOperation(format!("failed to read config: {}", e))
         })?;
-        let mut config: Config = toml::from_str(&contents).map_err(|e| {
+        let config: Config = toml::from_str(&contents).map_err(|e| {
             ApplicationError::WindowOperation(format!("failed to parse config: {}", e))
         })?;
 

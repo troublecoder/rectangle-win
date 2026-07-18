@@ -1,17 +1,27 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getVersion } from '@tauri-apps/api/app'
 import { useConfigStore } from '@/features/config-store'
 import SaveActions from '@/components/SaveActions.vue'
 
 const { t } = useI18n()
 const store = useConfigStore()
 
-const appVersion = ref('0.1.0')
+// 런타임에 tauri.conf.json의 version을 조회 — 단일 진실 공급원.
+// Tauri 웹뷰가 아닌 환경(순수 브라우저)에서는 조회 실패 시 '0.0.0' 폴백.
+const appVersion = ref('0.0.0')
 const checking = ref(false)
 const updateStatus = ref<'idle' | 'available' | 'up-to-date'>('idle')
 
-onMounted(() => store.load())
+onMounted(async () => {
+  store.load()
+  try {
+    appVersion.value = await getVersion()
+  } catch {
+    appVersion.value = '0.0.0'
+  }
+})
 
 const channelItems = [
   { label: t('about.channelStable'), value: 'stable' },

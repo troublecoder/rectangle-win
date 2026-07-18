@@ -43,15 +43,6 @@ export default {
     longThrowDistance: 'Long throw distance',
     longThrowDistanceDesc: 'Distance threshold in pixels',
   },
-  keyboard: {
-    title: 'Keyboard Snap',
-    description: 'Direction key snap settings',
-    enabled: 'Enable keyboard snap',
-    triggerModifiers: 'Trigger Modifiers',
-    sharedModifiersNote: 'Keyboard snap shares the throw trigger modifiers (Win+Alt). Direction keys snap the focused window.',
-    cycleTimeout: 'Cycle Timeout',
-    cycleTimeoutDesc: 'Reset chain after this many ms',
-  },
   display: {
     title: 'Display',
     description: 'Overlay appearance',

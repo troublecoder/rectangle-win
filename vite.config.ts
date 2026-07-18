@@ -27,5 +27,16 @@ export default defineConfig({
   build: {
     target: 'es2021',
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // konva는 무거운 캔버스 라이브러리 — SnapEditor lazy import와 분리해
+          // 다른 페이지 진입 시 로드되지 않도록 독립 청크로 분리.
+          // (@nuxt/ui는 vite 플러그인이 자체 처리하므로 manualChunks에서 제외 —
+          //  넣으면 tailwindcss/oxide .node 바이너리까지 끌어와 빌드 에러)
+          konva: ['konva', 'vue-konva'],
+        },
+      },
+    },
   },
 })
