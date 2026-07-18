@@ -1374,10 +1374,11 @@ function clearHotkey() {
 <template>
   <div class="space-y-2">
     <div class="flex items-center gap-2">
-      <button
-        type="button"
-        class="flex flex-1 items-center gap-2 rounded-md border border-default px-3 py-2 text-left text-sm transition-colors"
-        :class="capturing ? 'border-primary bg-primary/5' : 'hover:bg-elevated/50'"
+      <UButton
+        :color="capturing ? 'primary' : 'neutral'"
+        :variant="capturing ? 'outline' : 'outline'"
+        block
+        :class="capturing ? 'ring-2 ring-primary/50' : ''"
         @click="toggleCapture"
         @keydown="onKeydown"
         @blur="onBlur"
@@ -1385,7 +1386,7 @@ function clearHotkey() {
         <UIcon
           v-if="capturing"
           name="i-lucide-keyboard"
-          class="size-4 animate-pulse text-primary"
+          class="size-4 animate-pulse"
         />
         <UBadge
           v-for="mod in displayBadges"
@@ -1398,7 +1399,7 @@ function clearHotkey() {
         <span v-if="capturing" class="ml-auto text-xs text-muted">
           {{ t('throw.capturing') }}
         </span>
-      </button>
+      </UButton>
       <UButton
         v-if="modelValue.length > 0"
         icon="i-lucide-x"
