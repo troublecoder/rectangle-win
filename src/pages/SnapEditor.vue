@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, ref, computed, resolveComponent } from 'vue'
+import { h, onMounted, ref, computed, watch, resolveComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ColumnDef } from '@tanstack/vue-table'
 import { useConfigStore } from '@/features/config-store'
@@ -14,7 +14,16 @@ const store = useConfigStore()
 onMounted(() => store.load())
 
 // TanStack ExpandedState는 Record<string, boolean>. ref<string[]>가 아님에 주의.
+// Accordion 동작: 한 번에 하나의 행만 확장. 새로운 행을 확장하면 기존 행은 닫힌다.
 const expanded = ref<Record<string, boolean>>({})
+
+watch(expanded, (val) => {
+  const openIds = Object.keys(val).filter((k) => val[k])
+  if (openIds.length > 1) {
+    // 가장 최근에 열린 하나만 남기고 닫기
+    expanded.value = { [openIds[openIds.length - 1]]: true }
+  }
+}, { deep: true })
 
 // Nuxt UI 컴포넌트를 h() 안에서 참조하려면 resolveComponent 필요.
 const UButton = resolveComponent('UButton')
@@ -52,8 +61,10 @@ function addTarget(kind: 'area' | 'action') {
   const target: SnapTarget = kind === 'area'
     ? { kind: 'area', id, name, x_ratio: 0.1, y_ratio: 0.1, w_ratio: 0.3, h_ratio: 0.3 }
     : { kind: 'action', id, name, action: 'Maximize' }
-  store.draft.snap.areas.push(target)
-  expanded.value = { ...expanded.value, [id]: true }
+  // 새 항목을 맨 위에 삽입 (사용자가 바로 볼 수 있도록)
+  store.draft.snap.areas.unshift(target)
+  // 다른 확장은 닫고 새 항목만 확장
+  expanded.value = { [id]: true }
 }
 
 const columns = computed<ColumnDef<SnapTarget>[]>(() => [

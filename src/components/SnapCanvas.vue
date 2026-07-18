@@ -19,16 +19,34 @@ const CANVAS_W = 320
 const CANVAS_H = Math.round(CANVAS_W * 9 / 16)
 
 // konva는 CSS variable을 파싱하지 못하므로 useCssVar로 resolve된 hex 값을 사용.
-// --ui-color-primary-500 은 Nuxt UI가 rgb 채널 트리플("r g b")로 노출하므로
+// --ui-color-*-500 은 Nuxt UI가 rgb 채널 트리플("r g b")로 노출하므로
 // rgb()로 감싸서 최종 색상 문자열 생성. alpha는 별도 조립.
 // initialValue fallback을 두어 마운트 전/변수 미정의 시에도 유효한 색상이 되도록 함.
 const primaryRaw = useCssVar('--ui-color-primary-500', undefined, { initialValue: '99 102 241' })
 const neutralRaw = useCssVar('--ui-color-neutral-500', undefined, { initialValue: '115 115 115' })
+const mutedRaw = useCssVar('--ui-color-neutral-800', undefined, { initialValue: '63 63 70' })
+const elevatedRaw = useCssVar('--ui-color-neutral-900', undefined, { initialValue: '39 39 42' })
 const primaryChannel = computed(() => primaryRaw.value || '99 102 241')
 const neutralChannel = computed(() => neutralRaw.value || '115 115 115')
+const mutedChannel = computed(() => mutedRaw.value || '63 63 70')
+const elevatedChannel = computed(() => elevatedRaw.value || '39 39 42')
 const primaryColor = computed(() => `rgb(${primaryChannel.value})`)
 const primaryFill = computed(() => `rgb(${primaryChannel.value} / 0.3)`)
 const neutralStroke = computed(() => `rgb(${neutralChannel.value})`)
+// 모니터 본체 — 다크/라이트 모드 모두에서 자연스러운 데스크톱 화면 느낌.
+const monitorFill = computed(() => `rgb(${elevatedChannel.value})`)
+const monitorStroke = computed(() => `rgb(${mutedChannel.value})`)
+
+const monitorConfig = computed(() => ({
+  x: 0,
+  y: 0,
+  width: CANVAS_W,
+  height: CANVAS_H,
+  fill: monitorFill.value,
+  stroke: monitorStroke.value,
+  strokeWidth: 2,
+  cornerRadius: 6,
+}))
 
 const rectConfig = computed(() => {
   if (!props.area) return null

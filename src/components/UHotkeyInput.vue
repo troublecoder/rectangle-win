@@ -1,4 +1,14 @@
 <script setup lang="ts">
+/**
+ * 핫키 캡처 입력 — modifier 키 조합을 잡아 string[]로 내보낸다.
+ *
+ * VS Code 식 동작:
+ *  - 캡처 시작 후 modifier(Win/Ctrl/Alt/Shift)를 누르는 동안 조합이 화면에 누적.
+ *  - modifier가 아닌 일반 키(예: 방향키, 문자)를 누르면 그 시점의 modifier 조합을 확정.
+ *  - ESC: 캡처 취소.
+ *  - blur: 캡처 취소.
+ *  - 빈 조합은 확정하지 않는다 (백엔드 check_throw_modifiers가 거부).
+ */
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -9,6 +19,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>()
 const { t } = useI18n()
 
 const capturing = ref(false)
+// 캡처 도중 누적 중인 modifier 집합
+const pendingMods = ref<Set<string>>(new Set())
 
 // modifier 키 매핑 (e.code → 백엔드 토큰)
 const CODE_TO_TOKEN: Record<string, string> = {
@@ -22,12 +34,44 @@ const CODE_TO_TOKEN: Record<string, string> = {
   MetaRight: 'Win',
 }
 
+const MODIFIER_TOKENS = new Set(['Win', 'Ctrl', 'Alt', 'Shift'])
+
 const displayBadges = computed(() =>
   props.modelValue.length > 0 ? props.modelValue : [t('throw.noHotkey')],
 )
 
+const pendingBadges = computed(() =>
+  Array.from(pendingMods.value).length > 0
+    ? Array.from(pendingMods.value)
+    : [t('throw.captureHint')],
+)
+
 function toggleCapture() {
-  capturing.value = !capturing.value
+  if (capturing.value) {
+    // 이미 캡처 중이면 취소
+    cancelCapture()
+    return
+  }
+  pendingMods.value = new Set()
+  capturing.value = true
+}
+
+function commitCapture() {
+  if (pendingMods.value.size === 0) {
+    cancelCapture()
+    return
+  }
+  // 정해진 순서로 정렬 (Win, Ctrl, Alt, Shift)
+  const order = ['Win', 'Ctrl', 'Alt', 'Shift']
+  const sorted = order.filter((m) => pendingMods.value.has(m))
+  emit('update:modelValue', sorted)
+  capturing.value = false
+  pendingMods.value = new Set()
+}
+
+function cancelCapture() {
+  capturing.value = false
+  pendingMods.value = new Set()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -36,40 +80,31 @@ function onKeydown(e: KeyboardEvent) {
   e.stopPropagation()
 
   if (e.key === 'Escape') {
-    capturing.value = false
+    cancelCapture()
     return
   }
 
-  // 눌린 modifier들을 수집
-  const mods = new Set<string>()
-  // e.code 기반으로 모든 눌린 modifier 감지는 불가 (단일 이벤트만).
-  // 따라서 현재 이벤트의 modifier 플래그 사용.
-  if (e.ctrlKey) mods.add('Ctrl')
-  if (e.shiftKey) mods.add('Shift')
-  if (e.altKey) mods.add('Alt')
-  if (e.metaKey) mods.add('Win')
-
-  // modifier 키 자체를 누른 경우에도 해당 토큰 추가
   const token = CODE_TO_TOKEN[e.code]
-  if (token) mods.add(token)
+  if (token) {
+    // modifier 키 눌림 — 누적 (e.repeat 무시)
+    if (!e.repeat) pendingMods.value.add(token)
+    // modifier만 누르는 동안엔 확정하지 않고 대기
+    return
+  }
 
-  // 빈 조합은 거부 (백엔드 check_throw_modifiers가 빈 조합 거부)
-  if (mods.size === 0) return
-
-  // 정해진 순서로 정렬 (Win, Ctrl, Alt, Shift)
-  const order = ['Win', 'Ctrl', 'Alt', 'Shift']
-  const sorted = order.filter((m) => mods.has(m))
-
-  emit('update:modelValue', sorted)
-  capturing.value = false
-}
-
-function onBlur() {
-  capturing.value = false
+  // modifier가 아닌 키 — 현재 누적된 modifier 조합 확정.
+  // modifier가 하나도 안 눌린 상태에서 일반 키만 온 경우엔 무시 (빈 조합 거부).
+  if (pendingMods.value.size > 0) {
+    commitCapture()
+  }
 }
 
 function clearHotkey() {
   emit('update:modelValue', [])
+}
+
+function onBlur() {
+  cancelCapture()
 }
 </script>
 
@@ -78,7 +113,7 @@ function clearHotkey() {
     <div class="flex items-center gap-2">
       <UButton
         :color="capturing ? 'primary' : 'neutral'"
-        :variant="capturing ? 'outline' : 'outline'"
+        variant="outline"
         block
         :class="capturing ? 'ring-2 ring-primary/50' : ''"
         @click="toggleCapture"
@@ -90,17 +125,26 @@ function clearHotkey() {
           name="i-lucide-keyboard"
           class="size-4 animate-pulse"
         />
-        <UBadge
-          v-for="mod in displayBadges"
-          :key="mod"
-          :label="mod"
-          color="neutral"
-          variant="subtle"
-          size="sm"
-        />
-        <span v-if="capturing" class="ml-auto text-xs text-muted">
-          {{ t('throw.capturing') }}
-        </span>
+        <template v-if="capturing">
+          <UBadge
+            v-for="mod in pendingBadges"
+            :key="mod"
+            :label="mod"
+            color="primary"
+            variant="subtle"
+            size="sm"
+          />
+        </template>
+        <template v-else>
+          <UBadge
+            v-for="mod in displayBadges"
+            :key="mod"
+            :label="mod"
+            color="neutral"
+            variant="subtle"
+            size="sm"
+          />
+        </template>
       </UButton>
       <UButton
         v-if="modelValue.length > 0"
@@ -112,7 +156,7 @@ function clearHotkey() {
       />
     </div>
     <p class="text-xs text-muted">
-      {{ capturing ? t('throw.captureHint') : t('throw.captureHotkeyDesc') }}
+      {{ capturing ? t('throw.captureHintMulti') : t('throw.captureHotkeyDesc') }}
     </p>
   </div>
 </template>
