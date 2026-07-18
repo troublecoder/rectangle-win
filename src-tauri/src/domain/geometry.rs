@@ -74,6 +74,25 @@ pub fn ratio_to_pixels(
     )
 }
 
+/// zone rect에 snap margin을 적용 — 각 변을 안쪽으로 margin 픽셀만큼 축소.
+///
+/// margin > 0이면 창 외곽에 여백이 생겨 인접 창 사이에 간격이 벌어진다.
+/// margin이 rect 크기보다 크면 최소 1픽셀을 유지 (음수 크기 방지).
+/// margin == 0이면 rect를 그대로 반환.
+pub fn apply_margin(rect: Rect<i32, Pixel>, margin: i32) -> Rect<i32, Pixel> {
+    if margin <= 0 {
+        return rect;
+    }
+    let m = margin;
+    // width/height가 2*m 이하가 되지 않도록 보정 (최소 1픽셀).
+    let new_w = (rect.size.width - 2 * m).max(1);
+    let new_h = (rect.size.height - 2 * m).max(1);
+    Rect::new(
+        Point2D::new(rect.origin.x + m, rect.origin.y + m),
+        Size2D::new(new_w, new_h),
+    )
+}
+
 /// 델타의 거리(픽셀) 계산 — Long Throw 임계값 판별용
 pub fn throw_distance(delta: Vector2D<f64, Pixel>) -> f64 {
     (delta.x * delta.x + delta.y * delta.y).sqrt()

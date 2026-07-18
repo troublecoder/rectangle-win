@@ -15,9 +15,10 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowThreadProcessId, GetWindowRect, MoveWindow, SetWindowPos,
-    ShowWindow, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOZORDER,
-    SWP_SHOWWINDOW,
+    BringWindowToTop, GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowPlacement,
+    GetWindowThreadProcessId, GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetForegroundWindow,
+    SetWindowPlacement, ShowWindow, WindowFromPoint, GA_ROOT, GWL_STYLE, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WS_SIZEBOX,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -75,6 +76,95 @@ fn dwm_window_rect(hwnd: HWND) -> AppResult<RECT> {
     .map_err(|e| ApplicationError::WindowOperation(format!("DwmGetWindowAttribute: {e}")))?;
     Ok(rect)
 }
+
+/// FancyZones 의 `AdjustRectForSizeWindowToRect` 포팅.
+///
+/// zone rect(스냅 영역)를 받아, 창의 DWM 보이지 않는 테두리 보정을 적용해
+/// 확장한다. `GetWindowRect`(그림자 포함)와 `DWMWA_EXTENDED_FRAME_BOUNDS`
+/// (실제 보이는 프레임)의 차이를 좌우하단 마진으로 계산해 zone rect를
+/// 바깥으로 밀어낸다. 이렇게 하지 않으면 보이는 창이 zone보다 작아진다.
+///
+/// 크기 조절 불가능한 창(WS_SIZEBOX 없음)은 원래 크기를 유지한다.
+fn adjust_rect_for_border(hwnd: HWND, zone_rect: RECT) -> RECT {
+    let mut new_rect = zone_rect;
+    // SAFETY: hwnd는 유효한 창 핸들. 버퍼는 스택.
+    unsafe {
+        let mut win_rect = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut win_rect);
+
+        if let Ok(frame) = dwm_window_rect(hwnd) {
+            // frame - win_rect 차이가 보이지 않는 테두리 폭.
+            // left는 보통 음수(그림자가 왼쪽으로 확장), right/bottom은 양수.
+            let left_margin = frame.left - win_rect.left;
+            let right_margin = frame.right - win_rect.right;
+            let bottom_margin = frame.bottom - win_rect.bottom;
+            new_rect.left = new_rect.left.saturating_sub(left_margin.max(0));
+            new_rect.right = new_rect.right.saturating_sub(right_margin.max(0));
+            new_rect.bottom = new_rect.bottom.saturating_sub(bottom_margin.max(0));
+            // 음수 마진(그림자가 바깥으로 확장)이면 rect를 바깥으로 확장.
+            if left_margin < 0 {
+                new_rect.left = new_rect.left.saturating_add((-left_margin) as i32);
+            }
+            if right_margin < 0 {
+                new_rect.right = new_rect.right.saturating_add((-right_margin) as i32);
+            }
+            if bottom_margin < 0 {
+                new_rect.bottom = new_rect.bottom.saturating_add((-bottom_margin) as i32);
+            }
+        }
+
+        // 크기 조절 불가능한 창은 크기를 그대로 유지(이동만).
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        if style & WS_SIZEBOX.0 == 0 {
+            let w = win_rect.right - win_rect.left;
+            let h = win_rect.bottom - win_rect.top;
+            new_rect.right = new_rect.left + w;
+            new_rect.bottom = new_rect.top + h;
+        }
+    }
+    new_rect
+}
+
+/// FancyZones 의 `SizeWindowToRect` 포팅.
+///
+/// `SetWindowPlacement` 를 사용해 창을 배치한다. `SetWindowPos` 와 달리:
+/// - 최소화/최대화 상태를 정확히 복원(WPF_RESTORETOMAXIMIZED 플래그 제어)
+/// - `WPF_ASYNCWINDOWPLACEMENT` 로 비동기 처리
+/// - DPI-unaware 타겟 창은 OS가 자동 스케일링
+/// 두 번 호출로 스케일링 안정화 (FancyZones Issue #365).
+fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
+    // SAFETY: hwnd는 유효한 창 핸들. placement 버퍼는 스택.
+    unsafe {
+        // 최대화/최소화 상태면 먼저 복원 — SetWindowPlacement 가 무시될 수 있음.
+        if IsZoomed(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        GetWindowPlacement(hwnd, &mut placement)
+            .map_err(|e| ApplicationError::WindowOperation(format!("GetWindowPlacement: {e}")))?;
+
+        placement.rcNormalPosition = rect;
+        placement.flags |= WPF_ASYNCWINDOWPLACEMENT;
+        placement.showCmd = SW_RESTORE.0 as u32;
+
+        // 두 번 호출 — 첫 번째는 DPI 스케일링 적용, 두 번째로 안정화.
+        SetWindowPlacement(hwnd, &placement)
+            .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPlacement(1): {e}")))?;
+        SetWindowPlacement(hwnd, &placement)
+            .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPlacement(2): {e}")))?;
+
+        // snap된 창을 foreground로 가져오기 — SetWindowPlacement는 z-order를 유지하므로
+        // 명시적으로 foreground 전환하지 않으면 이전 foreground 창 밑에 깔림.
+        // SetForegroundWindow는 OS 포그라운드 타이머 제한이 있어 BringWindowToTop도 병행.
+        let _ = SetForegroundWindow(hwnd);
+        let _ = BringWindowToTop(hwnd);
+    }
+    Ok(())
+}
 ///
 /// `HWND` 는 windows-rs 0.58 에서 `HWND(*mut c_void)` 이며,
 /// 포인터 크기는 플랫폼에 따라 64비트이므로 `u64 → usize → *mut _` 경로로 안전하게 변환한다.
@@ -96,11 +186,35 @@ impl WindowMover for Win32WindowMover {
         Some(hwnd.0 as usize as u64)
     }
 
+    fn window_at_cursor(&self, x: i32, y: i32) -> Option<u64> {
+        // SAFETY: WindowFromPoint는 읽기 전용 조회. POINT는 값 전달.
+        // WindowFromPoint는 가장 위에 있는 창(자식 컨트롤 포함)을 반환하므로,
+        // GetAncestor(GA_ROOT)로 최상위 창을 얻는다.
+        let hwnd = unsafe {
+            let raw = WindowFromPoint(windows::Win32::Foundation::POINT { x, y });
+            if raw.is_invalid() {
+                return None;
+            }
+            // 자식 창 → 최상위 부모 창. GetAncestor는 실패 시 invalid HWND 반환.
+            let root = GetAncestor(raw, GA_ROOT);
+            if root.is_invalid() { raw } else { root }
+        };
+        if hwnd.is_invalid() {
+            return None;
+        }
+        // 우리 앱 창(설정/오버레이)은 snap 대상에서 제외.
+        if is_own_window(hwnd) {
+            return None;
+        }
+        Some(hwnd.0 as usize as u64)
+    }
+
     fn apply_snap_target(
         &self,
         window_handle: u64,
         target: &SnapTarget,
         monitor: &MonitorBounds,
+        margin: i32,
     ) -> AppResult<()> {
         let hwnd = hwnd_from_u64(window_handle);
 
@@ -113,30 +227,20 @@ impl WindowMover for Win32WindowMover {
                 ..
             } => {
                 let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, monitor);
-                // SetWindowPos 에 snap 영역 좌표를 그대로 사용.
-                // DWM 테두리 보정은 시스템마다 결과가 달라 제거.
-                // snap_margin 설정으로 사용자가 여백 조절 가능.
-                let x = rect.origin.x;
-                let y = rect.origin.y;
-                let w = rect.size.width;
-                let h = rect.size.height;
-                // SAFETY: hwnd 는 호출자가 전달한 유효(로 가정된) 창 핸들.
-                // 최대화된 창은 SetWindowPos 가 무시되므로 먼저 복원.
-                // SWP_FRAMECHANGED 로 프레임 재계산 — DWM 테두리/그림자로 인한
-                // 공간 남김 현상 완화.
-                unsafe {
-                    let _ = ShowWindow(hwnd, SW_RESTORE);
-                    SetWindowPos(
-                        hwnd,
-                        HWND_TOP,
-                        x,
-                        y,
-                        w,
-                        h,
-                        SWP_NOZORDER | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
-                    )
-                }
-                .map_err(|e| ApplicationError::WindowOperation(e.to_string()))?;
+                // snap_margin 적용 — 각 변을 안쪽으로 margin 픽셀 축소.
+                let rect = geometry::apply_margin(rect, margin);
+                // zone rect → Win32 RECT (가상 화면 절대 좌표).
+                let zone_rect = RECT {
+                    left: rect.origin.x,
+                    top: rect.origin.y,
+                    right: rect.origin.x + rect.size.width,
+                    bottom: rect.origin.y + rect.size.height,
+                };
+                // FancyZones 방식: DWM 테두리 보정 후 SetWindowPlacement 로 배치.
+                // 보이지 않는 DWM 테두리(우측/하단 약 7-8px)만큼 zone rect를 바깥으로
+                // 확장하지 않으면, 보이는 창이 zone보다 작아진다.
+                let adjusted = adjust_rect_for_border(hwnd, zone_rect);
+                size_window_to_rect(hwnd, adjusted)?;
                 Ok(())
             }
             SnapTarget::Action { action, .. } => apply_action(hwnd, *action, monitor),

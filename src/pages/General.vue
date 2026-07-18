@@ -89,6 +89,25 @@ const languageItems = [
             </UFormField>
           </section>
 
+          <!-- 창 간격 -->
+          <section class="space-y-4">
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-move-horizontal" class="size-4 text-primary" />
+              <h3 class="text-sm font-medium text-muted">{{ t('general.windowGap') }}</h3>
+            </div>
+            <USeparator />
+            <UFormField :label="t('general.snapMargin')" :description="t('general.snapMarginDesc')">
+              <USlider
+                v-model="store.draft.general.snap_margin"
+                :min="0"
+                :max="30"
+                :step="1"
+                class="w-full"
+              />
+              <template #hint>{{ store.draft.general.snap_margin }}px</template>
+            </UFormField>
+          </section>
+
           <!-- 언어 -->
           <section class="space-y-4">
             <div class="flex items-center gap-2">

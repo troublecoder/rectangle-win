@@ -53,11 +53,17 @@ impl WindowMover for MockWindowMover {
         *self.foreground_window.lock().unwrap()
     }
 
+    fn window_at_cursor(&self, _x: i32, _y: i32) -> Option<u64> {
+        // mock은 foreground를 반환 (단위 테스트에서 foreground 설정으로 제어).
+        *self.foreground_window.lock().unwrap()
+    }
+
     fn apply_snap_target(
         &self,
         window_handle: u64,
         target: &SnapTarget,
         _monitor: &MonitorBounds,
+        _margin: i32,
     ) -> AppResult<()> {
         let call = MockWindowCall::ApplySnap {
             window: window_handle,
