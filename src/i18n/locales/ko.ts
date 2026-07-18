@@ -91,6 +91,8 @@ export default {
     upToDate: '최신 버전입니다',
     checking: '업데이트 확인 중...',
     updateAvailable: '업데이트 가능',
+    installUpdate: '설치',
+    installing: '설치 중...',
   },
   common: {
     save: '저장',

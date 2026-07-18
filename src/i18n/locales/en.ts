@@ -91,6 +91,8 @@ export default {
     upToDate: 'You are up to date',
     checking: 'Checking for updates...',
     updateAvailable: 'Update available',
+    installUpdate: 'Install',
+    installing: 'Installing...',
   },
   common: {
     save: 'Save',

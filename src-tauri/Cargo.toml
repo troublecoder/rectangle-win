@@ -29,6 +29,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # 로깅 / 비동기 런타임
 log = "0.4"

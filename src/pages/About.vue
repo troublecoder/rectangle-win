@@ -2,17 +2,19 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getVersion } from '@tauri-apps/api/app'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 import { useConfigStore } from '@/features/config-store'
 import SaveActions from '@/components/SaveActions.vue'
 
 const { t } = useI18n()
 const store = useConfigStore()
 
-// 런타임에 tauri.conf.json의 version을 조회 — 단일 진실 공급원.
-// Tauri 웹뷰가 아닌 환경(순수 브라우저)에서는 조회 실패 시 '0.0.0' 폴백.
 const appVersion = ref('0.0.0')
 const checking = ref(false)
+const installing = ref(false)
 const updateStatus = ref<'idle' | 'available' | 'up-to-date'>('idle')
+const updateError = ref<string | null>(null)
 
 onMounted(async () => {
   store.load()
@@ -31,11 +33,32 @@ const channelItems = [
 async function checkForUpdates() {
   checking.value = true
   updateStatus.value = 'idle'
+  updateError.value = null
   try {
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    updateStatus.value = 'up-to-date'
+    const update = await check()
+    updateStatus.value = update ? 'available' : 'up-to-date'
+  } catch (e) {
+    updateError.value = e instanceof Error ? e.message : String(e)
   } finally {
     checking.value = false
+  }
+}
+
+async function installUpdate() {
+  installing.value = true
+  updateError.value = null
+  try {
+    const update = await check()
+    if (!update) {
+      updateStatus.value = 'up-to-date'
+      return
+    }
+    await update.downloadAndInstall()
+    await relaunch()
+  } catch (e) {
+    updateError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    installing.value = false
   }
 }
 </script>
@@ -109,7 +132,7 @@ async function checkForUpdates() {
                   class="w-full"
                 />
               </UFormField>
-              <div class="flex items-center gap-3">
+              <div class="flex flex-wrap items-center gap-3">
                 <UButton
                   :label="checking ? t('about.checking') : t('about.checkForUpdates')"
                   icon="i-lucide-refresh-cw"
@@ -117,6 +140,15 @@ async function checkForUpdates() {
                   color="primary"
                   variant="soft"
                   @click="checkForUpdates"
+                />
+                <UButton
+                  v-if="updateStatus === 'available'"
+                  :label="installing ? t('about.installing') : t('about.installUpdate')"
+                  icon="i-lucide-download"
+                  :loading="installing"
+                  color="primary"
+                  variant="solid"
+                  @click="installUpdate"
                 />
                 <UBadge
                   v-if="updateStatus === 'up-to-date'"
@@ -133,6 +165,13 @@ async function checkForUpdates() {
                   icon="i-lucide-arrow-up-circle"
                 />
               </div>
+              <UAlert
+                v-if="updateError"
+                color="error"
+                variant="soft"
+                icon="i-lucide-alert-circle"
+                :title="updateError"
+              />
             </template>
           </section>
         </template>
