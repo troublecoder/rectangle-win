@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, ref, computed, watch, resolveComponent } from 'vue'
+import { h, onMounted, ref, computed, watch, nextTick, resolveComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ColumnDef } from '@tanstack/vue-table'
 import { useConfigStore } from '@/features/config-store'
@@ -10,6 +10,9 @@ import type { SnapTarget } from '@/entities/config'
 
 const { t } = useI18n()
 const store = useConfigStore()
+// 테이블 루트를 참조하여 expand 시 해당 행으로 스크롤
+// UTable ref는 컴포넌트 인스턴스이므로 $el로 실제 DOM에 접근
+const tableRef = ref<any>(null)
 
 onMounted(() => store.load())
 
@@ -17,13 +20,44 @@ onMounted(() => store.load())
 // Accordion 동작: 한 번에 하나의 행만 확장. 새로운 행을 확장하면 기존 행은 닫힌다.
 const expanded = ref<Record<string, boolean>>({})
 
+// 가장 최근에 확장된 행 id (스크롤용)
+let lastExpandedId: string | null = null
+
 watch(expanded, (val) => {
   const openIds = Object.keys(val).filter((k) => val[k])
   if (openIds.length > 1) {
     // 가장 최근에 열린 하나만 남기고 닫기
     expanded.value = { [openIds[openIds.length - 1]]: true }
+    return
+  }
+  const currentId = openIds[0] ?? null
+  if (currentId && currentId !== lastExpandedId) {
+    lastExpandedId = currentId
+    // expand 렌더링 완료 후 해당 행으로 스크롤
+    nextTick(() => scrollToRow(currentId))
+  } else if (!currentId) {
+    lastExpandedId = null
   }
 }, { deep: true })
+
+// 테이블 tbody 내에서 해당 id의 행(tr)을 찾아 scrollIntoView.
+// UTable은 tr에 data 식별자를 노출하지 않으므로, 행 인덱스 기반으로 탐색.
+function scrollToRow(id: string) {
+  if (!store.draft || !tableRef.value) return
+  const rowIndex = store.draft.snap.areas.findIndex((a) => a.id === id)
+  if (rowIndex < 0) return
+  // UTable ref에서 실제 DOM 추출 (컴포넌트 인스턴스의 $el 또는 자기 자신)
+  const root = (tableRef.value?.$el ?? tableRef.value) as HTMLElement | null
+  if (!root) return
+  const tbody = root.querySelector('tbody')
+  if (!tbody) return
+  // 데이터 행 tr (aria-hidden placeholder 제외). 확장 콘텐츠 tr은 데이터 행 바로 뒤.
+  const rows = Array.from(tbody.querySelectorAll(':scope > tr:not([aria-hidden="true"])'))
+  const targetRow = rows[rowIndex] as HTMLElement | undefined
+  if (targetRow) {
+    targetRow.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
 
 // Nuxt UI 컴포넌트를 h() 안에서 참조하려면 resolveComponent 필요.
 const UButton = resolveComponent('UButton')
@@ -158,6 +192,7 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
         <template v-else-if="store.draft">
           <UCard variant="subtle">
             <UTable
+              ref="tableRef"
               :data="store.draft.snap.areas"
               :columns="columns"
               v-model:expanded="expanded"
