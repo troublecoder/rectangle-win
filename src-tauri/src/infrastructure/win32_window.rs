@@ -146,6 +146,13 @@ fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
             SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         )
         .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPos: {e}")))?;
+
+        // snap 이동 후 z-order 재확인 — HWND_TOP으로 이동했지만 OS가
+        // 다른 창을 위로 올릴 수 있어 한 번 더 보정.
+        let _ = SetWindowPos(
+            hwnd, HWND_TOP, 0, 0, 0, 0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+        );
     }
     Ok(())
 }
