@@ -44,23 +44,22 @@ async function toggleEnabled(value: boolean) {
       <template #footer>
         <div class="flex w-full flex-col gap-2">
           <USeparator />
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex min-w-0 items-center gap-2">
-              <UIcon name="i-lucide-zap" class="size-4 shrink-0 text-muted" />
-              <span class="truncate text-sm whitespace-nowrap">{{ t('nav.enableSnap') }}</span>
-            </div>
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-zap" class="size-4 shrink-0 text-muted" />
+            <span class="min-w-0 flex-1 truncate text-sm whitespace-nowrap">{{ t('nav.enableSnap') }}</span>
             <USwitch
               :model-value="store.draft?.keyboard.enabled ?? false"
               @update:model-value="toggleEnabled($event as boolean)"
             />
+            <UButton
+              :aria-label="t('nav.quit')"
+              :title="t('nav.quit')"
+              icon="i-lucide-power"
+              color="error"
+              variant="ghost"
+              size="sm"
+            />
           </div>
-          <UButton
-            :label="t('nav.quit')"
-            icon="i-lucide-power"
-            color="error"
-            variant="ghost"
-            block
-          />
         </div>
       </template>
     </UDashboardSidebar>
