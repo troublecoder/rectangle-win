@@ -11,6 +11,7 @@ import { ref, computed } from 'vue'
 import * as api from './api'
 import type { Config } from '@/entities/config'
 import { defaultConfig } from '@/entities/default-config'
+import { i18n, type SupportedLocale } from '@/i18n'
 
 export const useConfigStore = defineStore('config', () => {
   // 백엔드에 저장된 최신 설정
@@ -33,6 +34,9 @@ export const useConfigStore = defineStore('config', () => {
       const config = await api.getConfig()
       saved.value = config
       draft.value = JSON.parse(JSON.stringify(config))
+      // 언어 단일 진실: config.general.language → i18n locale 동기화
+      // (legacy: false 이므로 i18n.global.locale은 ref, .value로 접근)
+      i18n.global.locale.value = config.general.language as SupportedLocale
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {

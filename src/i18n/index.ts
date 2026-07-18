@@ -5,7 +5,7 @@ import koMessages from './locales/ko'
 
 export const i18n = createI18n({
   legacy: false,
-  locale: 'en',
+  locale: 'ko',
   fallbackLocale: 'en',
   messages: {
     en: { ...en, ...enMessages },
