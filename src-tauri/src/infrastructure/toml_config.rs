@@ -68,12 +68,11 @@ impl TomlConfigStore {
     ///   - ↓ Restore, ↑ Maximize (세로 방향은 창 상태 토글)
     fn config_with_defaults() -> Config {
         use crate::domain::model::SectorMap;
-        use crate::domain::presets::SnapPreset;
 
         let mut config = Config::default();
-        // full 프리셋 — sixth/two-thirds 등 모든 영역 포함.
+        // 빌트인 영역은 config에 저장하지 않음 — 코드에서 제공 (SnapPreset::Full).
+        // config.snap.areas는 사용자 추가 영역만 (기본: 빈 배열).
         config.snap.active_preset = "full".to_string();
-        config.snap.areas = SnapPreset::Full.targets();
 
         // 8섹터 throw 매핑 — 시계방향, 0번=오른쪽(E).
         // 섹터 번호는 domain::model::Sector 주석 기준:

@@ -14,20 +14,7 @@ export const defaultConfig: Config = {
   },
   snap: {
     active_preset: 'full',
-    areas: [
-      { kind: 'area', id: 'left-half', name: 'Left Half', x_ratio: 0, y_ratio: 0, w_ratio: 0.5, h_ratio: 1 },
-      { kind: 'area', id: 'right-half', name: 'Right Half', x_ratio: 0.5, y_ratio: 0, w_ratio: 0.5, h_ratio: 1 },
-      { kind: 'area', id: 'top-half', name: 'Top Half', x_ratio: 0, y_ratio: 0, w_ratio: 1, h_ratio: 0.5 },
-      { kind: 'area', id: 'bottom-half', name: 'Bottom Half', x_ratio: 0, y_ratio: 0.5, w_ratio: 1, h_ratio: 0.5 },
-      { kind: 'area', id: 'center', name: 'Center', x_ratio: 0.25, y_ratio: 0.25, w_ratio: 0.5, h_ratio: 0.5 },
-      { kind: 'area', id: 'third-left', name: 'Third Left', x_ratio: 0, y_ratio: 0, w_ratio: 1 / 3, h_ratio: 1 },
-      { kind: 'area', id: 'third-center', name: 'Third Center', x_ratio: 1 / 3, y_ratio: 0, w_ratio: 1 / 3, h_ratio: 1 },
-      { kind: 'area', id: 'third-right', name: 'Third Right', x_ratio: 2 / 3, y_ratio: 0, w_ratio: 1 / 3, h_ratio: 1 },
-      { kind: 'action', id: 'maximize', name: 'Maximize', action: 'Maximize' },
-      { kind: 'action', id: 'almost-maximize', name: 'Almost Maximize', action: 'AlmostMaximize' },
-      { kind: 'action', id: 'maximize-height', name: 'Maximize Height', action: 'MaximizeHeight' },
-      { kind: 'action', id: 'restore', name: 'Restore', action: 'Restore' },
-    ],
+    areas: [], // 사용자 추가 영역만 (빌트인은 코드에서 제공)
   },
   throw: {
     trigger_modifiers: ['Win', 'Alt'],

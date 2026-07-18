@@ -9,7 +9,7 @@ use tauri::State;
 use crate::application::errors::ApplicationError;
 use crate::application::ports::{ConfigStore, MonitorProvider};
 use crate::domain::errors::DomainError;
-use crate::domain::model::Config;
+use crate::domain::model::{Config, SnapTarget};
 use crate::presentation::state::AppState;
 
 /// 프론트엔드로 직렬화되는 에러 응답.
@@ -63,6 +63,13 @@ pub fn save_config(state: State<'_, AppState>, config: Config) -> CmdResult<()> 
 #[tauri::command]
 pub fn get_config_path(state: State<'_, AppState>) -> String {
     state.config_store.path().to_string_lossy().to_string()
+}
+
+/// 빌트인 snap 영역(preset) 목록을 반환 — config에 저장되지 않는 코드 제공 영역.
+/// 프론트에서 Throw 매핑 선택지에 커스텀과 함께 표시.
+#[tauri::command]
+pub fn get_builtin_targets() -> Vec<SnapTarget> {
+    crate::domain::presets::SnapPreset::Full.targets()
 }
 
 /// 모니터 정보 DTO (프론트엔드 직렬화용).

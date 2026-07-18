@@ -154,10 +154,10 @@ impl KeyboardService {
             return Ok(None);
         };
 
-        // snap.areas 에서 실제 SnapTarget 조회.
-        let target = config
-            .snap
-            .areas
+        // 빌트인 + 커스텀에서 SnapTarget 조회.
+        let mut all = crate::domain::presets::SnapPreset::Full.targets();
+        all.extend(config.snap.areas.iter().cloned());
+        let target = all
             .iter()
             .find(|t| t.id() == target_id.as_str())
             .ok_or_else(|| {

@@ -1,15 +1,31 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/features/config-store'
+import * as api from '@/features/api'
 import SaveActions from '@/components/SaveActions.vue'
 import UHotkeyInput from '@/components/UHotkeyInput.vue'
 import SectorMappingTable from '@/components/SectorMappingTable.vue'
+import type { SnapTarget } from '@/entities/config'
 
 const { t } = useI18n()
 const store = useConfigStore()
+const builtinTargets = ref<SnapTarget[]>([])
 
-onMounted(() => store.load())
+onMounted(async () => {
+  store.load()
+  try {
+    builtinTargets.value = await api.getBuiltinTargets()
+  } catch {
+    builtinTargets.value = []
+  }
+})
+
+// 빌트인 + 커스텀 영역을 합친 전체 목록 (매핑 선택지용).
+const allTargets = computed<SnapTarget[]>(() => {
+  const custom = store.draft?.snap.areas ?? []
+  return [...builtinTargets.value, ...custom]
+})
 </script>
 
 <template>
@@ -91,7 +107,7 @@ onMounted(() => store.load())
             </div>
             <USeparator />
             <SectorMappingTable
-              :targets="store.draft.snap.areas"
+              :targets="allTargets"
               :mapping="store.draft.throw.mapping"
               :long-throw-mapping="store.draft.throw.long_throw.mapping"
               @update:mapping="store.draft!.throw.mapping = $event"

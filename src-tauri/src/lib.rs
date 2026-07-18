@@ -31,6 +31,7 @@ pub fn run() {
             presentation::commands::get_config,
             presentation::commands::save_config,
             presentation::commands::get_config_path,
+            presentation::commands::get_builtin_targets,
             presentation::commands::get_monitors,
             presentation::commands::test_snap_to_sector,
         ])

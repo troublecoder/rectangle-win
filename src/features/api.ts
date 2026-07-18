@@ -7,8 +7,10 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   configSchema,
   monitorInfoSchema,
+  snapTargetSchema,
   type Config,
   type MonitorInfo,
+  type SnapTarget,
 } from '@/entities/config'
 
 /** CommandError (commands.rs) */
@@ -31,6 +33,11 @@ export async function saveConfig(config: Config): Promise<void> {
 
 export async function getConfigPath(): Promise<string> {
   return invoke<string>('get_config_path')
+}
+
+export async function getBuiltinTargets(): Promise<SnapTarget[]> {
+  const raw = await invoke<unknown>('get_builtin_targets')
+  return snapTargetSchema.array().parse(raw)
 }
 
 export async function getMonitors(): Promise<MonitorInfo[]> {

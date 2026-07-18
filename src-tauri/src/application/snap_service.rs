@@ -52,6 +52,14 @@ impl Default for SnapInner {
     }
 }
 
+/// 빌트인 영역(preset) + 사용자 커스텀 영역(config)을 합친 전체 목록을 반환.
+/// 빌트인은 config에 저장하지 않고 코드에서만 제공.
+fn all_targets(config: &crate::domain::model::Config) -> Vec<crate::domain::model::SnapTarget> {
+    let mut all = crate::domain::presets::SnapPreset::Full.targets();
+    all.extend(config.snap.areas.iter().cloned());
+    all
+}
+
 /// 커서 기반 스냅 서비스.
 ///
 /// 입력 어댑터(modifier 눌림/뗌, 마우스 이동)가 호출하는 3개의 진입점을 제공한다.
@@ -272,9 +280,8 @@ impl SnapService {
             None => return Ok(()), // 매핑 없음 — snap 없이 종료
         };
 
-        let target = config
-            .snap
-            .areas
+        let targets = all_targets(&config);
+        let target = targets
             .iter()
             .find(|t| t.id() == target_id)
             .ok_or_else(|| ApplicationError::Domain(
@@ -320,9 +327,8 @@ impl SnapService {
             Some(id) => id,
             None => return Ok(None),
         };
-        let target = config
-            .snap
-            .areas
+        let targets = all_targets(config);
+        let target = targets
             .iter()
             .find(|t| t.id() == target_id.as_str());
         let target = match target {
