@@ -15,12 +15,13 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId,
-    GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetWindowPos, ShowWindow,
+    BringWindowToTop, GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId,
+    GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetForegroundWindow, SetWindowPos, ShowWindow,
     WindowFromPoint, GA_ROOT, GWL_STYLE, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
     SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
     WS_SIZEBOX,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, VK_MENU, KEYEVENTF_KEYUP};
 
 use crate::application::errors::{ApplicationError, AppResult};
 use crate::application::ports::WindowMover;
@@ -147,12 +148,13 @@ fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
         )
         .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPos: {e}")))?;
 
-        // snap 이동 후 z-order 재확인 — HWND_TOP으로 이동했지만 OS가
-        // 다른 창을 위로 올릴 수 있어 한 번 더 보정.
-        let _ = SetWindowPos(
-            hwnd, HWND_TOP, 0, 0, 0, 0,
-            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
-        );
+        // snap 이동 후 foreground 전환 — snap된 창을 실제로 맨 앞으로.
+        // HWND_TOP만으로는 다른 프로세스 창 위로 안 올라감.
+        // Alt 키 가짜 입력으로 Windows foreground 권한 제한 우회 후 SetForegroundWindow.
+        keybd_event(VK_MENU.0 as u8, 0, Default::default(), 0);
+        keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = BringWindowToTop(hwnd);
     }
     Ok(())
 }
