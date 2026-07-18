@@ -1,0 +1,48 @@
+name: Release
+
+# 태그 push (v* 패턴) 시 Windows 빌드 + GitHub release 생성.
+# updater artifacts 포함 — TAURI_SIGNING_PRIVATE_KEY secret 필요.
+#
+# secret 설정 가이드는 docs/updater-setup.md 참고.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Build & Release (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # updater 서명 — secret 미등록 시 이 단계에서 실패.
+          # docs/updater-setup.md 가이드로 key 발급 후 GitHub secret에 등록:
+          #   TAURI_SIGNING_PRIVATE_KEY  : 비공개 키 파일 내용
+          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD : 키 생성 시 설정한 비밀번호 (없으면 빈 값)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # 태그명을 release 태그/이름으로 사용 (예: v0.1.0).
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Rectangle Win ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false
+          # updater용 latest.json 자동 생성 (tauri.conf.json endpoints가 이를 가리킴).
+          updaterJsonPreferNsis: true
