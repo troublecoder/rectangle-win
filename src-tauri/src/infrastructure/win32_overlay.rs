@@ -52,7 +52,7 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, DIB_RGB_COLORS, HBITMAP, HDC,
-    HGDIOBJ, SelectObject,
+    SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, ShowWindow,
@@ -71,14 +71,11 @@ use crate::domain::model::OverlayConfig;
 #[derive(Default)]
 struct OverlayDrawState {
     visible: bool,
-    #[allow(dead_code)]
     center: Option<(i32, i32)>,
     #[allow(dead_code)]
     sector_count: u8,
     active_sector: Option<u8>,
     snap_preview: Option<(i32, i32, i32, i32)>,
-    #[allow(dead_code)]
-    cursor: Option<(i32, i32)>,
 }
 
 /// WS_EX_LAYERED + UpdateLayeredWindow 기반 오버레이.
@@ -107,11 +104,7 @@ pub struct Win32LayeredOverlay {
 struct OverlayResources {
     hwnd: HWND,
     hdc_mem: HDC,
-    /// 이전 비트맵(기본 1x1 모노). DeleteObject 로 정리용 보관.
-    _previous_bmp: HGDIOBJ,
     dc_render_target: ID2D1DCRenderTarget,
-    #[allow(dead_code)]
-    d2d_factory: ID2D1Factory1,
     brush: ID2D1SolidColorBrush,
     /// 점선(대시) 사각형용 stroke style (snap preview).
     dash_style: ID2D1StrokeStyle,
@@ -185,7 +178,7 @@ impl Win32LayeredOverlay {
             unsafe { d2d_factory.CreateDCRenderTarget(&rt_props)? };
 
         // 5. 32bpp DIB section + 메모리 DC 생성 후 DC render target 에 바인딩.
-        let (hdc_mem, hbitmap, previous_bmp) = Self::create_dib(init_w, init_h)?;
+        let (hdc_mem, hbitmap) = Self::create_dib(init_w, init_h)?;
         let bind_rect = RECT {
             left: 0,
             top: 0,
@@ -234,9 +227,7 @@ impl Win32LayeredOverlay {
         Ok(OverlayResources {
             hwnd,
             hdc_mem,
-            _previous_bmp: previous_bmp,
             dc_render_target,
-            d2d_factory,
             brush,
             dash_style,
             width: init_w,
@@ -245,12 +236,8 @@ impl Win32LayeredOverlay {
     }
 
     /// 32bpp DIB section + 메모리 DC 생성.
-    /// 반환: (메모리 DC, DIB HBITMAP, SelectObject 로 얻은 이전 객체).
-    /// 호출자는 크기 변경 시 이전 DIB 를 DeleteObject 해야 한다.
-    fn create_dib(
-        w: i32,
-        h: i32,
-    ) -> windows::core::Result<(HDC, HBITMAP, HGDIOBJ)> {
+    /// 반환: (메모리 DC, DIB HBITMAP).
+    fn create_dib(w: i32, h: i32) -> windows::core::Result<(HDC, HBITMAP)> {
         let w = w.max(1);
         let h = h.max(1);
         let bmi = BITMAPINFO {
@@ -280,9 +267,9 @@ impl Win32LayeredOverlay {
         let hbitmap: HBITMAP = unsafe {
             CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?
         };
-        // DIB 를 메모리 DC 에 선택. 이전 객체는 복구/정리용으로 보관.
-        let previous_bmp = unsafe { SelectObject(hdc_mem, hbitmap) };
-        Ok((hdc_mem, hbitmap, previous_bmp))
+        // DIB 를 메모리 DC 에 선택. 이전 객체는 더 이상 복구/정리에 사용되지 않으므로 무시.
+        let _previous_bmp = unsafe { SelectObject(hdc_mem, hbitmap) };
+        Ok((hdc_mem, hbitmap))
     }
 
     /// 오버레이 창 생성.
@@ -534,14 +521,6 @@ impl OverlayController for Win32LayeredOverlay {
         state.snap_preview = None;
         drop(state);
         // redraw로 이전 프리뷰를 지우고 빈(투명) 상태로 만듦.
-        self.redraw();
-        Ok(())
-    }
-
-    fn update_cursor_indicator(&self, x: i32, y: i32) -> AppResult<()> {
-        let mut state = self.state.lock().unwrap();
-        state.cursor = Some((x, y));
-        drop(state);
         self.redraw();
         Ok(())
     }

@@ -127,7 +127,6 @@ impl ConfigStore for MockConfigStore {
 #[derive(Debug, Default)]
 pub struct MockOverlayController {
     pub visible: Mutex<bool>,
-    pub last_cursor: Mutex<Option<(i32, i32)>>,
     pub last_sector: Mutex<Option<u8>>,
     /// 마지막으로 show_snap_preview 에 전달된 사각형.
     pub last_snap_preview: Mutex<Option<(i32, i32, i32, i32)>>,
@@ -141,11 +140,6 @@ impl OverlayController for MockOverlayController {
         // Win32LayeredOverlay 와 동일: show_reticle 은 active_sector/snap_preview 클리어.
         *self.last_sector.lock().unwrap() = None;
         *self.last_snap_preview.lock().unwrap() = None;
-        Ok(())
-    }
-
-    fn update_cursor_indicator(&self, x: i32, y: i32) -> AppResult<()> {
-        *self.last_cursor.lock().unwrap() = Some((x, y));
         Ok(())
     }
 
