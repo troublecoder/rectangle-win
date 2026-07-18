@@ -76,6 +76,8 @@ export default {
     height: 'Height',
     newArea: 'New Area',
     newAction: 'New Action',
+    deleteTitle: 'Delete Area',
+    deleteConfirm: 'Delete \'{name}\'?',
   },
   about: {
     title: 'About',

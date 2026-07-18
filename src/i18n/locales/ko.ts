@@ -76,6 +76,8 @@ export default {
     height: '높이',
     newArea: '새 영역',
     newAction: '새 동작',
+    deleteTitle: '영역 삭제',
+    deleteConfirm: '\'{name}\'을(를) 삭제하시겠습니까?',
   },
   about: {
     title: '정보',

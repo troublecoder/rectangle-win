@@ -20,6 +20,14 @@ onMounted(() => store.load())
 // Accordion 동작: 한 번에 하나의 행만 확장. 새로운 행을 확장하면 기존 행은 닫힌다.
 const expanded = ref<Record<string, boolean>>({})
 
+// 삭제 확인 다이얼로그 상태.
+const pendingDeleteId = ref<string | null>(null)
+
+// 사용자가 추가한 영역인지 (프리셋 기본 영역은 삭제 불가).
+function isCustomArea(id: string): boolean {
+  return id.startsWith('area-')
+}
+
 // 가장 최근에 확장된 행 id (스크롤용)
 let lastExpandedId: string | null = null
 
@@ -61,7 +69,6 @@ function scrollToRow(id: string) {
 
 // Nuxt UI 컴포넌트를 h() 안에서 참조하려면 resolveComponent 필요.
 const UButton = resolveComponent('UButton')
-const UDropdownMenu = resolveComponent('UDropdownMenu')
 
 function updateTarget(id: string, patch: Partial<SnapTarget>) {
   if (!store.draft) return
@@ -72,20 +79,32 @@ function updateTarget(id: string, patch: Partial<SnapTarget>) {
 }
 
 function deleteTarget(id: string) {
-  if (!store.draft) return
+  pendingDeleteId.value = id
+}
+
+function confirmDelete() {
+  const id = pendingDeleteId.value
+  if (!id || !store.draft) return
   store.draft.snap.areas = store.draft.snap.areas.filter((a) => a.id !== id)
-  // Throw 매핑에서도 해당 id 제거 (고립 참조 방지).
-  // throw.mapping 과 throw.long_throw.mapping 모두 정리.
   for (const map of [store.draft.throw.mapping, store.draft.throw.long_throw.mapping]) {
     for (const [sector, targetId] of Object.entries(map)) {
       if (targetId === id) delete map[sector]
     }
   }
-  // expanded 상태에서도 제거 (TanStack ExpandedState는 Record<string, boolean>)
   const next = { ...expanded.value }
   delete next[id]
   expanded.value = next
+  pendingDeleteId.value = null
 }
+
+function cancelDelete() {
+  pendingDeleteId.value = null
+}
+
+const pendingDeleteName = computed(() => {
+  if (!pendingDeleteId.value || !store.draft) return ''
+  return store.draft.snap.areas.find((a) => a.id === pendingDeleteId.value)?.name ?? ''
+})
 
 function addTarget() {
   if (!store.draft) return
@@ -127,15 +146,15 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
     id: 'actions',
     header: '',
     cell: ({ row }) =>
-      h(UDropdownMenu, {
-        items: [
-          {
-            label: t('common.delete'),
+      isCustomArea(row.original.id)
+        ? h(UButton, {
             icon: 'i-lucide-trash-2',
-            onSelect: () => deleteTarget(row.original.id),
-          },
-        ],
-      }, () => h(UButton, { icon: 'i-lucide-more-horizontal', color: 'neutral', variant: 'ghost', size: 'xs' })),
+            color: 'error',
+            variant: 'ghost',
+            size: 'xs',
+            onClick: () => deleteTarget(row.original.id),
+          })
+        : undefined,
   },
 ])
 </script>
@@ -184,7 +203,7 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
           <UCard variant="subtle">
             <UTable
               ref="tableRef"
-              :data="store.draft.snap.areas.filter(a => a.kind === 'area')"
+              :data="store.draft.snap.areas.filter(a => a.kind === 'area' && isCustomArea(a.id))"
               :columns="columns"
               v-model:expanded="expanded"
               :get-row-id="(row: SnapTarget) => row.id"
@@ -212,5 +231,26 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
         </template>
       </UContainer>
     </template>
+
+    <!-- 삭제 확인 다이얼로그 -->
+    <UModal :open="pendingDeleteId !== null" @update:open="(v: boolean) => { if (!v) cancelDelete() }">
+      <template #content>
+        <div class="space-y-4 p-6">
+          <div class="flex items-center gap-3">
+            <div class="flex size-10 items-center justify-center rounded-full bg-error/10">
+              <UIcon name="i-lucide-trash-2" class="size-5 text-error" />
+            </div>
+            <div>
+              <h3 class="text-base font-medium">{{ t('snapEditor.deleteTitle') }}</h3>
+              <p class="text-sm text-muted">{{ t('snapEditor.deleteConfirm', { name: pendingDeleteName }) }}</p>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2">
+            <UButton :label="t('common.cancel')" color="neutral" variant="ghost" @click="cancelDelete" />
+            <UButton :label="t('common.delete')" icon="i-lucide-trash-2" color="error" variant="solid" @click="confirmDelete" />
+          </div>
+        </div>
+      </template>
+    </UModal>
   </UDashboardPanel>
 </template>
