@@ -22,8 +22,7 @@ async function checkForUpdates() {
   checking.value = true
   updateStatus.value = 'idle'
   try {
-    // TODO: Tauri updater plugin 연동
-    await new Promise(resolve => setTimeout(resolve, 1500))
+    await new Promise((resolve) => setTimeout(resolve, 1500))
     updateStatus.value = 'up-to-date'
   } finally {
     checking.value = false
@@ -52,44 +51,33 @@ async function checkForUpdates() {
         <div v-if="store.loading" class="py-8 text-center text-muted">
           <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
         </div>
-        <UAlert
-          v-else-if="store.error"
-          color="error"
-          variant="soft"
-          icon="i-lucide-alert-circle"
-          :title="store.error"
-        />
 
         <template v-else-if="store.draft">
-          <!-- App Info -->
+          <!-- 앱 정보 -->
           <section class="space-y-4">
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-info" class="size-4 text-primary" />
-              <h3 class="text-sm font-medium text-muted">{{ t('about.title') }}</h3>
-            </div>
-            <USeparator />
-            <div class="flex items-center gap-4">
-              <div class="flex size-12 items-center justify-center rounded-lg bg-primary/10">
-                <UIcon name="i-lucide-square" class="size-6 text-primary" />
+            <UCard variant="subtle">
+              <div class="flex items-center gap-4">
+                <div class="flex size-12 items-center justify-center rounded-lg bg-primary/10">
+                  <UIcon name="i-lucide-square" class="size-6 text-primary" />
+                </div>
+                <div>
+                  <p class="font-semibold">{{ t('app.name') }}</p>
+                  <p class="text-sm text-muted">{{ t('about.version') }} {{ appVersion }}</p>
+                </div>
               </div>
-              <div>
-                <p class="font-semibold">{{ t('app.name') }}</p>
-                <p class="text-sm text-muted">{{ t('about.version') }} {{ appVersion }}</p>
-              </div>
-              <div class="ml-auto">
-                <UButton
-                  :label="t('about.github')"
-                  icon="i-lucide-github"
-                  color="neutral"
-                  variant="outline"
-                  to="https://github.com/troublecoder/rectangle-win"
-                  target="_blank"
-                />
-              </div>
-            </div>
+              <UButton
+                :label="t('about.github')"
+                icon="i-lucide-github"
+                color="neutral"
+                variant="outline"
+                to="https://github.com/troublecoder/rectangle-win"
+                target="_blank"
+                class="mt-4"
+              />
+            </UCard>
           </section>
 
-          <!-- Auto Update -->
+          <!-- 업데이트 -->
           <section class="space-y-4">
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-refresh-cw" class="size-4 text-primary" />
@@ -102,16 +90,15 @@ async function checkForUpdates() {
                 <USwitch v-model="store.draft.update.enabled" />
               </div>
             </UFormField>
-
             <template v-if="store.draft.update.enabled">
               <UFormField :label="t('about.updateChannel')">
                 <USelect
                   v-model="store.draft.update.channel"
                   :items="channelItems"
                   value-key="value"
+                  class="w-full"
                 />
               </UFormField>
-
               <div class="flex items-center gap-3">
                 <UButton
                   :label="checking ? t('about.checking') : t('about.checkForUpdates')"
