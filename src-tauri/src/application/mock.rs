@@ -78,6 +78,8 @@ impl WindowMover for MockWindowMover {
         self.calls.lock().unwrap().push(MockWindowCall::GetRect { window: window_handle });
         Ok(MonitorBounds::new(0, 0, 1920, 1080))
     }
+
+    fn bring_to_foreground(&self, _window_handle: u64) {}
 }
 
 #[derive(Debug)]

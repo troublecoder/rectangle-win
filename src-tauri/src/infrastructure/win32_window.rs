@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId,
     GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetWindowPos, ShowWindow,
     WindowFromPoint, GA_ROOT, GWL_STYLE, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-    SWP_FRAMECHANGED, SWP_NOZORDER, SWP_SHOWWINDOW, WS_SIZEBOX,
+    SW_SHOWNORMAL, SWP_FRAMECHANGED, SWP_SHOWWINDOW, WS_SIZEBOX,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -126,6 +126,7 @@ fn adjust_rect_for_border(hwnd: HWND, zone_rect: RECT) -> RECT {
 }
 
 /// 창을 지정된 rect로 이동/크기 조절. SetWindowPos 1회 호출 — 빠르고 즉각적.
+/// HWND_TOP으로 z-order 최상위에 배치 (SWP_NOZORDER 사용 안 함 — 충돌).
 fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
     // SAFETY: hwnd는 유효한 창 핸들.
     unsafe {
@@ -141,7 +142,7 @@ fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
             rect.top,
             w,
             h,
-            SWP_NOZORDER | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+            SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         )
         .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPos: {e}")))?;
     }
@@ -247,6 +248,16 @@ impl WindowMover for Win32WindowMover {
             rect.right - rect.left,
             rect.bottom - rect.top,
         ))
+    }
+
+    fn bring_to_foreground(&self, window_handle: u64) {
+        let hwnd = hwnd_from_u64(window_handle);
+        // SetWindowPos(HWND_TOP)로 z-order 최상위 이동 — snap 시 이미 위에 있도록.
+        // SAFETY: hwnd는 유효한 창 핸들.
+        unsafe {
+            let _ = SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_SHOWWINDOW);
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+        }
     }
 }
 
