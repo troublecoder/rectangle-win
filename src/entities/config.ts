@@ -65,30 +65,49 @@ export const snapConfigSchema = z.object({
 })
 export type SnapConfig = z.infer<typeof snapConfigSchema>
 
+export const longThrowConfigSchema = z.object({
+  enabled: z.boolean(),
+  distance: z.number().int(),
+  mapping: sectorMapSchema,
+})
+export type LongThrowConfig = z.infer<typeof longThrowConfigSchema>
+
 export const throwConfigSchema = z.object({
   trigger_modifiers: z.array(z.string()),
-  long_throw_enabled: z.boolean(),
-  long_throw_distance: z.number().int(),
   mapping: sectorMapSchema,
-  long_throw_mapping: sectorMapSchema,
+  long_throw: longThrowConfigSchema,
 })
 export type ThrowConfig = z.infer<typeof throwConfigSchema>
 
 export const keyboardConfigSchema = z.object({
   enabled: z.boolean(),
-  cycle_timeout_ms: z.number().int(),
 })
 export type KeyboardConfig = z.infer<typeof keyboardConfigSchema>
 
+// ─── Overlay 하위 스키마들 ───────────────────────────────────────────
+export const cursorConfigSchema = z.object({
+  indicator: z.boolean(),
+  radius: z.number().int(),
+  color: z.string(),
+  opacity: z.number(),
+})
+export type CursorConfig = z.infer<typeof cursorConfigSchema>
+
+export const previewColorsSchema = z.object({
+  throw_color: z.string(),
+  long_throw_color: z.string(),
+})
+export type PreviewColors = z.infer<typeof previewColorsSchema>
+
+export const snapPreviewConfigSchema = z.object({
+  enabled: z.boolean(),
+  colors: previewColorsSchema,
+})
+export type SnapPreviewConfig = z.infer<typeof snapPreviewConfigSchema>
+
 export const overlayConfigSchema = z.object({
-  reticle_style: z.string(),
-  cursor_indicator: z.boolean(),
-  cursor_radius: z.number().int(),
-  cursor_color: z.string(),
-  cursor_opacity: z.number(),
-  sector_highlight_color: z.string(),
-  sector_count: z.number().int(),
-  snap_preview: z.boolean(),
+  cursor: cursorConfigSchema,
+  snap_preview: snapPreviewConfigSchema,
 })
 export type OverlayConfig = z.infer<typeof overlayConfigSchema>
 
