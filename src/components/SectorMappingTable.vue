@@ -20,9 +20,10 @@ const { t } = useI18n()
 const SECTOR_COUNT = 8
 const sectors = computed(() => Array.from({ length: SECTOR_COUNT }, (_, i) => i))
 
-// "할당 안 함" 옵션을 맨 앞에 추가 — value가 빈 문자열이면 매핑 제거.
+// "할당 안 함" 옵션 — Reka UI USelect는 빈 문자열 value를 금지하므로 sentinel 사용.
+const UNASSIGNED = '__none__'
 const targetOptions = computed(() => [
-  { label: t('throw.unassigned'), value: '' },
+  { label: t('throw.unassigned'), value: UNASSIGNED },
   ...props.targets.map((tgt) => ({ label: tgt.name, value: tgt.id })),
 ])
 
@@ -32,19 +33,19 @@ const sectorLabels: Record<number, string> = {
 }
 
 function getTarget(map: SectorMap, sector: number): string {
-  return map[String(sector)] ?? ''
+  return map[String(sector)] ?? UNASSIGNED
 }
 
 function setTarget(map: SectorMap, sector: number, targetId: string): SectorMap {
   const next = { ...map }
-  if (targetId) next[String(sector)] = targetId
+  if (targetId && targetId !== UNASSIGNED) next[String(sector)] = targetId
   else delete next[String(sector)]
   return next
 }
 
 // 개별 섹터 매핑 제거 (X 버튼).
 function clearTarget(map: SectorMap, sector: number, which: 'mapping' | 'longThrow') {
-  const next = setTarget(map, sector, '')
+  const next = setTarget(map, sector, UNASSIGNED)
   if (which === 'mapping') emit('update:mapping', next)
   else emit('update:longThrowMapping', next)
 }

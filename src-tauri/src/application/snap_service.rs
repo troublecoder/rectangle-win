@@ -97,12 +97,10 @@ impl SnapService {
             .window_at_cursor(cursor_x, cursor_y)
             .or_else(|| self.window_mover.get_foreground_window());
 
-        // lock-on 시점에 바로 z-order 최상위로 — snap 이동 시 이미 맨 위에 있도록.
-        if let Some(hwnd) = window {
-            self.window_mover.bring_to_foreground(hwnd);
-        }
-
         // lock-on 프리뷰: 현재 창의 rect를 cursor 색으로 표시.
+        // 주의: bring_to_foreground를 여기서 호출하면 SetForegroundWindow가
+        // 메시지 펌핑을 유발하여 LL hook 스레드가 블록 → 화면 멈춤.
+        // foreground 전환은 snap 이동 후(size_window_to_rect)에만 수행.
         self.overlay.show_reticle(cursor_x, cursor_y)?;
         if let Some(hwnd) = window {
             if let Ok(rect) = self.window_mover.get_window_rect(hwnd) {

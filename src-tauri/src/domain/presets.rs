@@ -1,6 +1,5 @@
-use crate::domain::model::{SnapTarget, WindowAction};
-
-/// 프리셋 패키지 — 콤보박스 선택지
+use crate::domain::model::SnapTarget;
+use crate::domain::model::WindowAction;/// 프리셋 패키지 — 콤보박스 선택지
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapPreset {
     Minimal,
@@ -66,10 +65,6 @@ fn action(id: &str, name: &str, act: WindowAction) -> SnapTarget {
     }
 }
 
-fn maximize() -> SnapTarget {
-    action("maximize", "Maximize", WindowAction::Maximize)
-}
-
 // ─── 프리셋별 영역 정의 ───
 
 fn minimal() -> Vec<SnapTarget> {
@@ -78,7 +73,7 @@ fn minimal() -> Vec<SnapTarget> {
         area("right-half", "Right Half", 0.5, 0.0, 0.5, 1.0),
         area("top-half", "Top Half", 0.0, 0.0, 1.0, 0.5),
         area("bottom-half", "Bottom Half", 0.0, 0.5, 1.0, 0.5),
-        maximize(),
+        action("maximize", "Maximize", WindowAction::Maximize),
     ]
 }
 
@@ -135,7 +130,7 @@ fn portrait() -> Vec<SnapTarget> {
         area("quarter-tr", "Top Right Quarter", 0.5, 0.0, 0.5, 0.5),
         area("quarter-bl", "Bottom Left Quarter", 0.0, 0.5, 0.5, 0.5),
         area("quarter-br", "Bottom Right Quarter", 0.5, 0.5, 0.5, 0.5),
-        maximize(),
+        action("maximize", "Maximize", WindowAction::Maximize),
     ]
 }
 

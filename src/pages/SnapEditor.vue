@@ -193,7 +193,7 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
           <UCard variant="subtle">
             <UTable
               ref="tableRef"
-              :data="store.draft.snap.areas"
+              :data="store.draft.snap.areas.filter(a => a.kind === 'area')"
               :columns="columns"
               v-model:expanded="expanded"
               :get-row-id="(row: SnapTarget) => row.id"

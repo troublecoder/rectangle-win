@@ -26,11 +26,11 @@ export const defaultConfig: Config = {
       { kind: 'action', id: 'maximize', name: 'Maximize', action: 'Maximize' },
       { kind: 'action', id: 'almost-maximize', name: 'Almost Maximize', action: 'AlmostMaximize' },
       { kind: 'action', id: 'maximize-height', name: 'Maximize Height', action: 'MaximizeHeight' },
+      { kind: 'action', id: 'restore', name: 'Restore', action: 'Restore' },
     ],
   },
   throw: {
     trigger_modifiers: ['Win', 'Alt'],
-    // 기본 매핑: 우측 방향은 우측 2/3, 좌측 방향은 좌측 1/3. ↓=restore, ↑=maximize.
     mapping: {
       '0': 'two-thirds-right',
       '1': 'sixth-br',
