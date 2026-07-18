@@ -167,8 +167,9 @@ impl KeyboardService {
             })?;
 
         let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
+        let margin = config.general.snap_margin as i32;
         self.window_mover
-            .apply_snap_target(window, target, &monitor)?;
+            .apply_snap_target(window, target, &monitor, margin)?;
 
         // snap 후 새 창 위치를 overlay 로 표시 — 사용자가 어디에 락온되어 있는지 확인.
         // show_reticle 으로 overlay 창을 visible + active_sector=None (RED lock-on 색상).

@@ -7,15 +7,21 @@ pub trait WindowMover: Send + Sync {
     /// 현재 전경창 핸들 반환 (u64로 표현)
     fn get_foreground_window(&self) -> Option<u64>;
 
-    /// 전경창을 지정된 snap 타겟(영역 또는 액션)으로 이동/실행
+    /// 지정한 화면 좌표 위에 있는 최상위 창 핸들 반환 (u64).
+    /// Armed 진입 시점에 커서 아래 창을 snap 대상으로 고정하기 위해 사용.
+    fn window_at_cursor(&self, x: i32, y: i32) -> Option<u64>;
+
+    /// 창을 지정된 snap 타겟(영역 또는 액션)으로 이동/실행.
+    /// Area 타입은 margin이 이미 적용된 픽셀 rect를 사용해 이동.
     fn apply_snap_target(
         &self,
         window_handle: u64,
         target: &SnapTarget,
         monitor: &MonitorBounds,
+        margin: i32,
     ) -> AppResult<()>;
 
-    /// 전경창의 현재 Rect (픽셀)
+    /// 창의 현재 Rect (픽셀)
     fn get_window_rect(&self, window_handle: u64) -> AppResult<MonitorBounds>;
 }
 

@@ -15,9 +15,10 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowThreadProcessId,
-    GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetWindowPlacement, ShowWindow, GWL_STYLE,
-    SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WS_SIZEBOX,
+    GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowThreadProcessId,
+    GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetWindowPlacement, ShowWindow, WindowFromPoint,
+    GA_ROOT, GWL_STYLE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WINDOWPLACEMENT,
+    WPF_ASYNCWINDOWPLACEMENT, WS_SIZEBOX,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -179,11 +180,35 @@ impl WindowMover for Win32WindowMover {
         Some(hwnd.0 as usize as u64)
     }
 
+    fn window_at_cursor(&self, x: i32, y: i32) -> Option<u64> {
+        // SAFETY: WindowFromPoint는 읽기 전용 조회. POINT는 값 전달.
+        // WindowFromPoint는 가장 위에 있는 창(자식 컨트롤 포함)을 반환하므로,
+        // GetAncestor(GA_ROOT)로 최상위 창을 얻는다.
+        let hwnd = unsafe {
+            let raw = WindowFromPoint(windows::Win32::Foundation::POINT { x, y });
+            if raw.is_invalid() {
+                return None;
+            }
+            // 자식 창 → 최상위 부모 창. GetAncestor는 실패 시 invalid HWND 반환.
+            let root = GetAncestor(raw, GA_ROOT);
+            if root.is_invalid() { raw } else { root }
+        };
+        if hwnd.is_invalid() {
+            return None;
+        }
+        // 우리 앱 창(설정/오버레이)은 snap 대상에서 제외.
+        if is_own_window(hwnd) {
+            return None;
+        }
+        Some(hwnd.0 as usize as u64)
+    }
+
     fn apply_snap_target(
         &self,
         window_handle: u64,
         target: &SnapTarget,
         monitor: &MonitorBounds,
+        margin: i32,
     ) -> AppResult<()> {
         let hwnd = hwnd_from_u64(window_handle);
 
@@ -196,6 +221,8 @@ impl WindowMover for Win32WindowMover {
                 ..
             } => {
                 let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, monitor);
+                // snap_margin 적용 — 각 변을 안쪽으로 margin 픽셀 축소.
+                let rect = geometry::apply_margin(rect, margin);
                 // zone rect → Win32 RECT (가상 화면 절대 좌표).
                 let zone_rect = RECT {
                     left: rect.origin.x,

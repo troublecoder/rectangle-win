@@ -118,8 +118,9 @@ pub fn test_snap_to_sector(
         .get_foreground_window()
         .ok_or(ApplicationError::NoForegroundWindow)?;
     let monitor = state.monitor_provider.monitor_at(cursor_x, cursor_y);
+    // test_snap_to_sector는 margin 0 사용 (테스트용).
     state
         .window_mover
-        .apply_snap_target(window, target, &monitor)?;
+        .apply_snap_target(window, target, &monitor, 0)?;
     Ok(())
 }

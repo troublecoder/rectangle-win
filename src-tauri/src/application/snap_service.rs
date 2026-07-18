@@ -35,6 +35,10 @@ struct SnapInner {
     fsm: CursorFsm,
     /// 이번 이벤트에서 sector가 변경되었는지 (overlay 갱신 최적화용).
     sector_changed: bool,
+    /// Armed 진입 시점에 커서 아래 있던 창 핸들.
+    /// modifier를 누른 순간의 창을 snap 대상으로 고정하기 위함.
+    /// None이면 폴백으로 foreground 창을 사용.
+    locked_window: Option<u64>,
 }
 
 impl Default for SnapInner {
@@ -43,6 +47,7 @@ impl Default for SnapInner {
             state: SnapState::Idle,
             fsm: CursorFsm::default(),
             sector_changed: false,
+            locked_window: None,
         }
     }
 }
@@ -93,6 +98,9 @@ impl SnapService {
         inner.state = SnapState::Armed;
         // Armed 진입 시 섹터/거리는 초기화된 상태여야 한다.
         inner.fsm = CursorFsm::default();
+        // modifier를 누른 순간 커서 아래의 창을 snap 대상으로 고정.
+        // 이후 마우스 이동/포커스 변화와 무관하게 이 창이 snap된다.
+        inner.locked_window = self.window_mover.window_at_cursor(cursor_x, cursor_y);
         Ok(())
     }
 
@@ -258,12 +266,18 @@ impl SnapService {
                 crate::domain::errors::DomainError::TargetNotFound(target_id.clone()),
             ))?;
 
-        let window = self
-            .window_mover
-            .get_foreground_window()
+        // Armed 진입 시 고정한 창(커서 아래 창)을 snap 대상으로 사용.
+        // 폴백: locked_window가 없으면 foreground 창 사용 (레거시 호환).
+        let locked = {
+            let mut inner = self.inner.lock();
+            inner.locked_window.take()
+        };
+        let window = locked
+            .or_else(|| self.window_mover.get_foreground_window())
             .ok_or(ApplicationError::NoForegroundWindow)?;
 
-        self.window_mover.apply_snap_target(window, target, &monitor)?;
+        let margin = config.general.snap_margin as i32;
+        self.window_mover.apply_snap_target(window, target, &monitor, margin)?;
         Ok(())
     }
 
@@ -300,12 +314,14 @@ impl SnapService {
             Some(t) => t,
             None => return Ok(None),
         };
-        // Area 타입: 비율 → 픽셀 변환.
+        // Area 타입: 비율 → 픽셀 변환 + snap_margin 축소.
         // Action 타입: 액션별 대략적 영역 반환 (미리보기용).
         let monitor = self.monitor_provider.monitor_at_cursor(cursor_x, cursor_y);
+        let margin = config.general.snap_margin as i32;
         match target {
             crate::domain::model::SnapTarget::Area { x_ratio, y_ratio, w_ratio, h_ratio, .. } => {
                 let rect = geometry::ratio_to_pixels(*x_ratio, *y_ratio, *w_ratio, *h_ratio, &monitor);
+                let rect = geometry::apply_margin(rect, margin);
                 Ok(Some((rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)))
             }
             crate::domain::model::SnapTarget::Action { action, .. } => {
