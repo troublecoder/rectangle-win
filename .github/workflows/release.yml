@@ -2,6 +2,10 @@ name: Release
 
 # 태그 push (v* 패턴) 시 Windows 빌드 + GitHub release 생성.
 # updater 서명 포함 — TAURI_SIGNING_PRIVATE_KEY/PASSWORD secret 필요.
+#
+# 버전 관리: 태그명이 단일 진실 공급원.
+# git tag v0.2.0 && git push origin v0.2.0 → tauri.conf.json.version이 0.2.0으로 치환되어 빌드.
+# 소스의 tauri.conf.json은 수정하지 않음 (커밋에 버전 올리기 불필요).
 on:
   push:
     tags:
@@ -13,6 +17,25 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: 태그명에서 버전 추출 및 tauri.conf.json에 주입
+        shell: bash
+        run: |
+          # github.ref_name = "v0.2.0" → VERSION = "0.2.0"
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "주입할 버전: $VERSION"
+          # tauri.conf.json의 "version" 필드를 태그 기반 버전으로 치환.
+          # node -e로 JSON 안전 수정 (sed보다 JSON 파싱이 안전).
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            c.version = process.env.VERSION;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+            console.log('tauri.conf.json version →', c.version);
+          "
+        env:
+          VERSION: ${{ github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -38,3 +61,4 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonPreferNsis: true
+
