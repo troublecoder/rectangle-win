@@ -18,7 +18,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId,
     GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetWindowPos, ShowWindow,
     WindowFromPoint, GA_ROOT, GWL_STYLE, HWND_TOP, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-    SW_SHOWNORMAL, SWP_FRAMECHANGED, SWP_SHOWWINDOW, WS_SIZEBOX,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    WS_SIZEBOX,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -252,11 +253,14 @@ impl WindowMover for Win32WindowMover {
 
     fn bring_to_foreground(&self, window_handle: u64) {
         let hwnd = hwnd_from_u64(window_handle);
-        // SetWindowPos(HWND_TOP)로 z-order 최상위 이동 — snap 시 이미 위에 있도록.
+        // z-order만 HWND_TOP으로 변경 — 크기/위치는 그대로.
+        // SWP_NOSIZE | SWP_NOMOVE로 0,0,0,0 무시. SWP_NOACTIVATE로 포커스 효과 최소화.
         // SAFETY: hwnd는 유효한 창 핸들.
         unsafe {
-            let _ = SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_SHOWWINDOW);
-            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+            let _ = SetWindowPos(
+                hwnd, HWND_TOP, 0, 0, 0, 0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+            );
         }
     }
 }
