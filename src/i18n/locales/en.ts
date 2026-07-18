@@ -7,10 +7,9 @@ export default {
     general: 'General',
     throw: 'Throw',
     snapEditor: 'Snap Editor',
-    keyboard: 'Keyboard',
     display: 'Display',
     about: 'About',
-    pause: 'Pause',
+    enableSnap: 'Enable snap',
     quit: 'Quit',
   },
   general: {

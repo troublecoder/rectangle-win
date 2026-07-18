@@ -7,10 +7,9 @@ export default {
     general: '일반',
     throw: '스로우',
     snapEditor: '스냅 에디터',
-    keyboard: '키보드',
     display: '디스플레이',
     about: '정보',
-    pause: '일시정지',
+    enableSnap: '스냅 활성화',
     quit: '종료',
   },
   general: {

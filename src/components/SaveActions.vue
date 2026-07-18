@@ -10,7 +10,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div class="flex items-center justify-end gap-2 border-t border-default pt-4">
+  <div class="flex items-center gap-2">
     <UButton
       :label="t('common.reset')"
       icon="i-lucide-rotate-ccw"
@@ -23,6 +23,7 @@ const { t } = useI18n()
       :label="t('common.save')"
       icon="i-lucide-save"
       color="primary"
+      variant="solid"
       :loading="saving"
       :disabled="!dirty"
       @click="emit('save')"
