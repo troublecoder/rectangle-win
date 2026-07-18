@@ -15,10 +15,10 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowThreadProcessId,
-    GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetWindowPlacement, ShowWindow, WindowFromPoint,
-    GA_ROOT, GWL_STYLE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WINDOWPLACEMENT,
-    WPF_ASYNCWINDOWPLACEMENT, WS_SIZEBOX,
+    BringWindowToTop, GetAncestor, GetForegroundWindow, GetWindowLongW, GetWindowPlacement,
+    GetWindowThreadProcessId, GetWindowRect, IsIconic, IsZoomed, MoveWindow, SetForegroundWindow,
+    SetWindowPlacement, ShowWindow, WindowFromPoint, GA_ROOT, GWL_STYLE, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WS_SIZEBOX,
 };
 
 use crate::application::errors::{ApplicationError, AppResult};
@@ -156,6 +156,12 @@ fn size_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
             .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPlacement(1): {e}")))?;
         SetWindowPlacement(hwnd, &placement)
             .map_err(|e| ApplicationError::WindowOperation(format!("SetWindowPlacement(2): {e}")))?;
+
+        // snap된 창을 foreground로 가져오기 — SetWindowPlacement는 z-order를 유지하므로
+        // 명시적으로 foreground 전환하지 않으면 이전 foreground 창 밑에 깔림.
+        // SetForegroundWindow는 OS 포그라운드 타이머 제한이 있어 BringWindowToTop도 병행.
+        let _ = SetForegroundWindow(hwnd);
+        let _ = BringWindowToTop(hwnd);
     }
     Ok(())
 }
