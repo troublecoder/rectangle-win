@@ -4,7 +4,7 @@
 //! 계층에 위임한다. 에러는 직렬화 가능한 [`CommandError`] 로 변환되어
 //! 프론트엔드에 `{ message, code }` 형태로 전달된다.
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::application::errors::ApplicationError;
 use crate::application::ports::{ConfigStore, MonitorProvider};
@@ -42,6 +42,17 @@ impl From<DomainError> for CommandError {
     }
 }
 
+/// tauri-plugin-autostart 의 enable/disable/is_enabled 가
+/// `tauri_plugin_autostart::Error` 를 반환하므로 CommandError 로 통합 변환.
+impl From<tauri_plugin_autostart::Error> for CommandError {
+    fn from(e: tauri_plugin_autostart::Error) -> Self {
+        CommandError {
+            message: e.to_string(),
+            code: "AUTOSTART".to_string(),
+        }
+    }
+}
+
 type CmdResult<T> = Result<T, CommandError>;
 
 /// 현재 설정을 로드한다.
@@ -52,10 +63,35 @@ pub fn get_config(state: State<'_, AppState>) -> CmdResult<Config> {
 
 /// 설정을 저장한다. 캐시와 디스크 모두 갱신된다.
 #[tauri::command]
-pub fn save_config(state: State<'_, AppState>, config: Config) -> CmdResult<()> {
+pub fn save_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    config: Config,
+) -> CmdResult<()> {
     state.config_store.save(&config)?;
     #[cfg(windows)]
     crate::infrastructure::win32_input::Win32InputListener::update_config(&config);
+    // 자동시작 반영 — TOML 의 launch_at_login 을 단일 진실로 OS 에 적용.
+    apply_autostart(&app, config.general.launch_at_login)?;
+    Ok(())
+}
+
+/// `launch_at_login` 값을 OS 자동시작 상태와 일치시킨다.
+///
+/// TOML 을 단일 진실 공급원으로 간주 — 현재 OS 상태와 다를 때만
+/// enable/disable 을 호출한다. 호출자:
+/// - `save_config` (설정 저장 직후)
+/// - `lib::run` setup 클로저 (부팅 시 TOML 기준으로 OS 강제 맞춤 —
+///   작업관리자/레지스트리 수동 변경을 다음 부팅에 복구)
+pub(crate) fn apply_autostart(app: &AppHandle, enabled: bool) -> CmdResult<()> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    let current = manager.is_enabled().unwrap_or(false);
+    if enabled && !current {
+        manager.enable()?;
+    } else if !enabled && current {
+        manager.disable()?;
+    }
     Ok(())
 }
 

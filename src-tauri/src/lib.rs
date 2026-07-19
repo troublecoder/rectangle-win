@@ -5,6 +5,8 @@ pub mod presentation;
 
 use tauri::{Manager, WindowEvent};
 
+use crate::application::ports::ConfigStore;
+
 pub fn run() {
     // Per-Monitor DPI-Aware V2 설정 — GetSystemMetrics/모니터 좌표가 물리 픽셀 기준으로
     // 일관되게 동작. 125%/150% 스케일 환경에서 오버레이 창 크기와 snap 좌표가 맞지 않는
@@ -38,6 +40,19 @@ pub fn run() {
         .setup(|app| {
             // 시스템 트레이 설정 (메뉴 + 아이콘).
             presentation::tray::setup_tray(app)?;
+
+            // 자동시작 동기화 — TOML 의 launch_at_login 을 단일 진실로
+            // OS 상태를 강제 맞춤. 작업관리자/레지스트리에서 수동 변경된
+            // 경우 다음 부팅에 TOML 기준으로 복구한다.
+            {
+                let state = app.state::<presentation::state::AppState>();
+                if let Ok(config) = state.config_store.load() {
+                    let _ = presentation::commands::apply_autostart(
+                        app.handle(),
+                        config.general.launch_at_login,
+                    );
+                }
+            }
 
             // 메인 창 닫기 요청을 가로채어 트레이로 숨긴다 (종료 아님).
             if let Some(main_window) = app.get_webview_window("main") {
