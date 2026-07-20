@@ -231,26 +231,28 @@ const columns = computed<ColumnDef<SnapTarget>[]>(() => [
         </template>
       </UContainer>
     </template>
+  </UDashboardPanel>
 
-    <!-- 삭제 확인 다이얼로그 -->
-    <UModal :open="pendingDeleteId !== null" @update:open="(v: boolean) => { if (!v) cancelDelete() }">
-      <template #content>
-        <div class="space-y-4 p-6">
-          <div class="flex items-center gap-3">
-            <div class="flex size-10 items-center justify-center rounded-full bg-error/10">
-              <UIcon name="i-lucide-trash-2" class="size-5 text-error" />
-            </div>
-            <div>
-              <h3 class="text-base font-medium">{{ t('snapEditor.deleteTitle') }}</h3>
-              <p class="text-sm text-muted">{{ t('snapEditor.deleteConfirm', { name: pendingDeleteName }) }}</p>
-            </div>
+  <!-- 삭제 확인 다이얼로그
+       UModal을 UDashboardPanel 밖에 두어야 DashboardPanel의 default slot과
+       충돌하지 않음 (Panel 내부에 두면 header/body slot이 렌더되지 않는 버그). -->
+  <UModal :open="pendingDeleteId !== null" @update:open="(v: boolean) => { if (!v) cancelDelete() }">
+    <template #content>
+      <div class="space-y-4 p-6">
+        <div class="flex items-center gap-3">
+          <div class="flex size-10 items-center justify-center rounded-full bg-error/10">
+            <UIcon name="i-lucide-trash-2" class="size-5 text-error" />
           </div>
-          <div class="flex justify-end gap-2">
-            <UButton :label="t('common.cancel')" color="neutral" variant="ghost" @click="cancelDelete" />
-            <UButton :label="t('common.delete')" icon="i-lucide-trash-2" color="error" variant="solid" @click="confirmDelete" />
+          <div>
+            <h3 class="text-base font-medium">{{ t('snapEditor.deleteTitle') }}</h3>
+            <p class="text-sm text-muted">{{ t('snapEditor.deleteConfirm', { name: pendingDeleteName }) }}</p>
           </div>
         </div>
-      </template>
-    </UModal>
-  </UDashboardPanel>
+        <div class="flex justify-end gap-2">
+          <UButton :label="t('common.cancel')" color="neutral" variant="ghost" @click="cancelDelete" />
+          <UButton :label="t('common.delete')" icon="i-lucide-trash-2" color="error" variant="solid" @click="confirmDelete" />
+        </div>
+      </div>
+    </template>
+  </UModal>
 </template>
